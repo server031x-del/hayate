@@ -36,3 +36,8 @@ under Apache-2.0. Its optional Triton runtime is
 [`woct0rdho/triton-windows`](https://github.com/woct0rdho/triton-windows),
 distributed under the MIT license. HAYATE calls these installed packages and
 does not copy their sources.
+
+The optional local WebUI calls FastAPI (MIT), Starlette (BSD-3-Clause), Uvicorn
+(BSD-3-Clause), python-multipart (Apache-2.0), and Pillow (HPND) as installed
+Python dependencies. HAYATE's WebUI HTML, CSS, and JavaScript are original
+project sources and do not vendor a third-party UI framework.

@@ -16,6 +16,7 @@ from hayate.loaders.base import LoaderStatus
 from hayate.loaders.factory import LoaderFactory
 from hayate.models import ModelRegistry
 from hayate.models.types import ModelRole
+from hayate.runtime.gpu_lease import GPULease
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,58 @@ class GenerationResult:
     log_path: Path
     output: Path
     runtime_metrics: dict | None = None
+
+
+def generation_artifact_paths(output: Path) -> tuple[Path, Path]:
+    return (
+        output.with_suffix(output.suffix + ".hayate.log"),
+        output.with_suffix(output.suffix + ".hayate.json"),
+    )
+
+
+def runtime_metrics_from_log(log_path: Path) -> dict | None:
+    runtime_metrics = None
+    if not log_path.is_file():
+        return None
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("HAYATE_RUNTIME_METRICS "):
+            try:
+                runtime_metrics = json.loads(line.removeprefix("HAYATE_RUNTIME_METRICS "))
+            except json.JSONDecodeError:
+                runtime_metrics = None
+    return runtime_metrics
+
+
+def write_generation_manifest(
+    plan: GenerationPlan,
+    *,
+    returncode: int,
+    duration_seconds: float,
+    log_path: Path,
+    runtime_metrics: dict | None,
+    job_id: str | None = None,
+) -> Path:
+    _, manifest_path = generation_artifact_paths(plan.request.output)
+    payload = {
+        "schema_version": 1,
+        "plan": plan.to_dict(),
+        "returncode": returncode,
+        "duration_seconds": duration_seconds,
+        "log_path": str(log_path),
+        "runtime_metrics": runtime_metrics,
+    }
+    if job_id is not None:
+        payload["job_id"] = job_id
+    temporary = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary, manifest_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return manifest_path
 
 
 class ExternalH3GenerationBackend:
@@ -371,42 +424,40 @@ class ExternalH3GenerationBackend:
         if not ok:
             raise GenerationPreflightError(f"upstream generation CLI probe failed: {reason}")
         plan.request.output.parent.mkdir(parents=True, exist_ok=True)
-        log_path = plan.request.output.with_suffix(plan.request.output.suffix + ".hayate.log")
-        manifest_path = plan.request.output.with_suffix(plan.request.output.suffix + ".hayate.json")
+        log_path, _ = generation_artifact_paths(plan.request.output)
         env = os.environ.copy()
         env.update(plan.environment)
+        env["PYTHONIOENCODING"] = "utf-8"
         started = time.perf_counter()
-        with log_path.open("w", encoding="utf-8") as log:
-            process = subprocess.run(
-                list(plan.command),
-                cwd=str(self.upstream.checkout),
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
+        lease = GPULease(
+            owner={"pid": os.getpid(), "kind": "generation", "output": str(plan.request.output)}
+        )
+        if not lease.acquire():
+            owner = lease.busy_owner() or {}
+            raise GenerationPreflightError(
+                f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})"
             )
+        try:
+            with log_path.open("w", encoding="utf-8") as log:
+                process = subprocess.run(
+                    list(plan.command),
+                    cwd=str(self.upstream.checkout),
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+        finally:
+            lease.release()
         duration = time.perf_counter() - started
-        runtime_metrics = None
-        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("HAYATE_RUNTIME_METRICS "):
-                try:
-                    runtime_metrics = json.loads(line.removeprefix("HAYATE_RUNTIME_METRICS "))
-                except json.JSONDecodeError:
-                    runtime_metrics = None
-        manifest_path.write_text(
-            json.dumps(
-                {
-                    "plan": plan.to_dict(),
-                    "returncode": process.returncode,
-                    "duration_seconds": duration,
-                    "log_path": str(log_path),
-                    "runtime_metrics": runtime_metrics,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        runtime_metrics = runtime_metrics_from_log(log_path)
+        write_generation_manifest(
+            plan,
+            returncode=process.returncode,
+            duration_seconds=duration,
+            log_path=log_path,
+            runtime_metrics=runtime_metrics,
         )
         return GenerationResult(
             process.returncode,

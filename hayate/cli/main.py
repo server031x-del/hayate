@@ -19,7 +19,9 @@ from hayate.hardware import HardwareProfile, HardwareProfiler
 from hayate.memory import MemoryManager
 from hayate.models import ModelRegistry
 from hayate.kernels import probe_w4a8_kernel
+from hayate.profiles import get_generation_profile
 from hayate.runtime import HayateRuntime, ModelRuntimeResult
+from hayate.runtime.gpu_lease import GPULease
 
 GIB = 1024**3
 
@@ -143,6 +145,18 @@ def build_parser() -> argparse.ArgumentParser:
     load_parser.add_argument("--vae-tile-size", type=int, default=256)
     load_parser.add_argument("--vae-no-tiling", action="store_true")
     load_parser.add_argument("--cudnn-benchmark", action="store_true")
+
+    webui_parser = subparsers.add_parser(
+        "webui", help="launch the local HAYATE Studio generation interface"
+    )
+    webui_parser.add_argument("--host", default="127.0.0.1")
+    webui_parser.add_argument("--port", type=int, default=7860)
+    webui_parser.add_argument("--open-browser", action="store_true")
+    webui_parser.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="allow a non-loopback bind; this exposes local model controls to the network",
+    )
     return parser
 
 
@@ -285,11 +299,18 @@ def run_inspect(args: argparse.Namespace, console: Console) -> int:
 
 
 def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
-    result = probe_w4a8_kernel(
-        args.python,
-        checkpoint=args.model,
-        layer=args.layer,
-    )
+    lease = GPULease(owner={"pid": os.getpid(), "kind": "kernel-check"})
+    if not lease.acquire():
+        owner = lease.busy_owner() or {}
+        raise HayateError(f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})")
+    try:
+        result = probe_w4a8_kernel(
+            args.python,
+            checkpoint=args.model,
+            layer=args.layer,
+        )
+    finally:
+        lease.release()
     payload = result.to_dict()
     if args.save is not None:
         args.save.parent.mkdir(parents=True, exist_ok=True)
@@ -322,20 +343,24 @@ def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
 
 
 def run_generate(args: argparse.Namespace, console: Console) -> int:
-    if args.rtx3060_fast or args.rtx3060_fast_sage:
-        args.steps = 20
-        args.easycache = True
-        args.easycache_threshold = 0.4
-        args.easycache_start = 0.15
-        args.easycache_end = 0.95
-        args.easycache_max_consecutive_skips = 2
-        args.blocks_to_swap = 49
-        args.activation_chunk_rows = 32768
-        args.vae_tile_size = 256
-    if args.rtx3060_fast:
-        args.attention_backend = "sdpa"
-    elif args.rtx3060_fast_sage:
-        args.attention_backend = "sageattn"
+    selected_profile = (
+        "fast" if args.rtx3060_fast else "fast_sage" if args.rtx3060_fast_sage else None
+    )
+    if selected_profile is not None:
+        profile = get_generation_profile(selected_profile)
+        for field in (
+            "steps",
+            "attention_backend",
+            "easycache",
+            "easycache_threshold",
+            "easycache_start",
+            "easycache_end",
+            "easycache_max_consecutive_skips",
+            "blocks_to_swap",
+            "activation_chunk_rows",
+            "vae_tile_size",
+        ):
+            setattr(args, field, getattr(profile, field))
     config_path = (args.config or _default_config()).resolve(strict=False)
     backend = ExternalH3GenerationBackend(
         args.upstream,
@@ -422,7 +447,31 @@ def run_load_check(args: argparse.Namespace, console: Console) -> int:
             command.append("--vae-no-tiling")
         if args.cudnn_benchmark:
             command.append("--cudnn-benchmark")
-    return subprocess.run(command, check=False).returncode
+    lease = GPULease(owner={"pid": os.getpid(), "kind": f"load-check:{args.component}"})
+    if not lease.acquire():
+        owner = lease.busy_owner() or {}
+        raise HayateError(f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})")
+    try:
+        return subprocess.run(command, check=False).returncode
+    finally:
+        lease.release()
+
+
+def run_webui_command(args: argparse.Namespace) -> int:
+    try:
+        from hayate.webui import run_webui
+    except ImportError as exc:
+        raise HayateError(
+            "WebUI dependencies are missing; run `uv sync --extra webui --extra generation`"
+        ) from exc
+    run_webui(
+        host=args.host,
+        port=args.port,
+        open_browser=args.open_browser,
+        allow_network=args.allow_network,
+        workspace=Path.cwd(),
+    )
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -438,6 +487,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run_generate(args, console)
         if args.command == "load-check":
             return run_load_check(args, console)
+        if args.command == "webui":
+            return run_webui_command(args)
         parser.error(f"unknown command: {args.command}")
     except (HayateError, OSError, ValueError) as exc:
         console.print(f"[red][HAYATE] {exc}[/red]")

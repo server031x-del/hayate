@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b12">
+  <title>HAYATE Studio</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#generate" aria-label="HAYATE Studio">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>HAYATE</strong><small>STUDIO</small></span>
+      </a>
+
+      <nav class="main-nav" aria-label="メインメニュー">
+        <button class="nav-item active" data-view="generate">
+          <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg>
+          <span>生成</span>
+        </button>
+        <button class="nav-item" data-view="queue">
+          <svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>
+          <span>キュー</span><b id="queueBadge" hidden>0</b>
+        </button>
+        <button class="nav-item" data-view="library">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m9 9 6 3-6 3Z"/></svg>
+          <span>ライブラリ</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+          <span>設定</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      <div class="machine-card" id="machineCard">
+        <div class="machine-head"><span class="status-dot"></span><span id="gpuName">GPUを確認中</span></div>
+        <div class="resource-row"><span>VRAM</span><strong id="vramText">—</strong></div>
+        <div class="meter"><i id="vramMeter"></i></div>
+        <div class="resource-row"><span>RAM</span><strong id="ramText">—</strong></div>
+        <div class="meter"><i id="ramMeter"></i></div>
+      </div>
+      <div class="version">HAYATE <span id="version">—</span> · LOCAL</div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="viewEyebrow">CREATE</p>
+          <h1 id="viewTitle">新しい映像をつくる</h1>
+        </div>
+        <div class="top-actions">
+          <div class="engine-pill"><span id="engineDot"></span><b id="engineState">エンジン確認中</b></div>
+          <button class="icon-button" id="refreshButton" title="更新" aria-label="更新">
+            <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="view active" id="view-generate">
+        <div class="generate-grid">
+          <form class="composer panel" id="generationForm">
+            <div class="section-heading">
+              <div><span class="step-number">01</span><h2>生成プロファイル</h2></div>
+              <p>品質と速度のバランスを選択</p>
+            </div>
+            <div class="profile-grid" id="profileGrid">
+              <label class="profile-card selected">
+                <input type="radio" name="profile" value="fast_sage" checked>
+                <span class="profile-icon speed">S</span>
+                <span><b>Fast Sage</b><small>10秒実測 6:59</small></span>
+                <em>推奨</em>
+              </label>
+              <label class="profile-card">
+                <input type="radio" name="profile" value="fast">
+                <span class="profile-icon balance">F</span>
+                <span><b>Fast SDPA</b><small>高い再現性</small></span>
+              </label>
+              <label class="profile-card">
+                <input type="radio" name="profile" value="quality">
+                <span class="profile-icon quality">Q</span>
+                <span><b>Quality</b><small>50点・最高忠実度</small></span>
+              </label>
+              <label class="profile-card">
+                <input type="radio" name="profile" value="custom">
+                <span class="profile-icon custom">C</span>
+                <span><b>Custom</b><small>すべて手動設定</small></span>
+              </label>
+            </div>
+
+            <div class="divider"></div>
+            <div class="section-heading compact">
+              <div><span class="step-number">02</span><h2>プロンプト</h2></div>
+              <span class="counter"><b id="promptCount">0</b> / 12,000</span>
+            </div>
+            <div class="prompt-box">
+              <textarea id="prompt" name="prompt" maxlength="12000" required placeholder="映像の被写体、動き、カメラ、光、音を自由に描写してください…">A premium cinematic commercial for a sleek metallic silver sports car. The same car accelerates along a coastal highway at golden hour, dynamic tracking shots, close-ups of LED headlights and aerodynamic bodywork, then a final hero shot in a modern city plaza. Realistic motion, synchronized engine sound and cinematic music, no text, no logo, no watermark.</textarea>
+              <div class="prompt-tools">
+                <button type="button" class="text-button" data-prompt-chip="[Shot 1] ">＋ ショット</button>
+                <button type="button" class="text-button" data-prompt-chip="overall_soundscape: ">＋ 音響</button>
+                <button type="button" class="text-button" data-prompt-chip="non_diegetic_music: ">＋ 音楽</button>
+                <button type="button" class="text-button" id="clearPrompt">クリア</button>
+              </div>
+            </div>
+
+            <div class="input-columns">
+              <div>
+                <label class="field-label">開始画像 <span>任意・I2V</span></label>
+                <label class="dropzone" id="dropzone">
+                  <input type="file" id="imageFile" accept="image/png,image/jpeg,image/webp">
+                  <span class="drop-icon">↥</span>
+                  <span class="drop-copy"><b>画像をドロップ</b><small>PNG / JPEG / WebP · 25 MBまで</small></span>
+                  <img id="imagePreview" alt="開始画像プレビュー" hidden>
+                  <button type="button" id="removeImage" class="remove-image" hidden aria-label="画像を削除">×</button>
+                </label>
+              </div>
+              <div class="quick-controls">
+                <label class="field-label">動画の長さ <span id="frameHint">124 frames</span></label>
+                <div class="segmented" id="durationControl">
+                  <button type="button" data-duration="5" class="active">5秒</button>
+                  <button type="button" data-duration="10">10秒</button>
+                  <button type="button" data-duration="15">15秒</button>
+                  <label><input id="customDuration" type="number" min="1" max="30" step="0.5" placeholder="任意"></label>
+                </div>
+                <label class="field-label control-label">解像度 <span id="resolutionHint">512 × 512</span></label>
+                <div class="resolution-row">
+                  <select id="resolutionPreset">
+                    <option value="512x512">Square · 512</option>
+                    <option value="640x640">Square · 640</option>
+                    <option value="768x432">Landscape · 768×432</option>
+                    <option value="864x480">Wide · 864×480</option>
+                    <option value="custom">カスタム</option>
+                  </select>
+                  <div class="dimension-fields" id="customResolution" hidden>
+                    <input id="width" type="number" min="256" max="1536" step="32" value="512" aria-label="幅">
+                    <span>×</span>
+                    <input id="height" type="number" min="256" max="1536" step="32" value="512" aria-label="高さ">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <details class="advanced" id="advancedSettings">
+              <summary><span>詳細設定</span><small>Sampler・EasyCache・メモリ</small><i></i></summary>
+              <div class="advanced-body">
+                <div class="setting-grid">
+                  <label><span>タスク</span><select id="task"><option value="auto">Auto</option><option value="t2va">T2V + Audio</option><option value="fl2va">I2V / FL2V</option><option value="ref2va">Reference</option></select></label>
+                  <label><span>Seed</span><div class="input-with-button"><input id="seed" type="number" min="0" max="2147483647" value="20260825"><button type="button" id="randomSeed" title="ランダム">↻</button></div></label>
+                  <label><span>Scheduler points</span><input id="steps" type="number" min="2" max="100" value="20"></label>
+                  <label><span>Attention</span><select id="attention"><option value="sageattn">SageAttention 2.2</option><option value="sdpa">PyTorch SDPA</option></select></label>
+                  <label><span>Block swap</span><input id="blocksSwap" type="number" min="0" max="49" value="49"></label>
+                  <label><span>Activation chunk rows</span><input id="chunkRows" type="number" min="0" max="1048576" step="1024" value="32768"></label>
+                  <label><span>VAE tile</span><select id="vaeTile"><option value="256">256 · 安全</option><option value="320">320 · 実験的</option></select></label>
+                  <label class="toggle-field"><span>Prompt Cache<small>同じ入力を高速再利用</small></span><input id="promptCache" type="checkbox" checked><i></i></label>
+                </div>
+                <div class="easycache-box">
+                  <div class="easycache-head"><div><b>EasyCache</b><small>Transformer計算を安全範囲で再利用</small></div><label class="switch"><input id="easycache" type="checkbox" checked><i></i></label></div>
+                  <div class="setting-grid cache-settings">
+                    <label><span>Threshold</span><input id="ecThreshold" type="number" min="0" max="2" step="0.05" value="0.4"></label>
+                    <label><span>Start</span><input id="ecStart" type="number" min="0" max="1" step="0.05" value="0.15"></label>
+                    <label><span>End</span><input id="ecEnd" type="number" min="0" max="1" step="0.05" value="0.95"></label>
+                    <label><span>Max skips</span><input id="ecSkips" type="number" min="1" max="20" value="2"></label>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <div class="submit-row">
+              <div class="summary-line">
+                <span><b id="summaryDuration">5.2秒</b> · <b id="summaryFrames">124 frames</b></span>
+                <small id="profileSummary">20 points · SageAttention · EasyCache</small>
+              </div>
+              <button type="submit" class="primary-button" id="generateButton">
+                <span class="button-glow"></span><span>生成を開始</span><kbd>Ctrl ↵</kbd>
+              </button>
+            </div>
+          </form>
+
+          <aside class="live-column">
+            <div class="live-card panel" id="liveCard">
+              <div class="live-head"><div><span class="live-dot"></span><b>LIVE PROGRESS</b></div><span id="liveStatus" class="status-badge idle">待機中</span></div>
+              <div class="idle-state" id="idleState">
+                <div class="orb"><i></i><i></i><span>H</span></div>
+                <h3>準備ができています</h3>
+                <p>生成を開始すると、モデル読込から書き出しまでの進捗をここに表示します。</p>
+              </div>
+              <div class="progress-state" id="progressState" hidden>
+                <div class="preview-stage" id="livePreview"><div class="scanline"></div><span id="previewLabel">GENERATING</span></div>
+                <div class="progress-meta"><div><p id="liveStage">起動準備</p><h3 id="liveDetail">エンジンを起動しています</h3></div><strong id="livePercent">0%</strong></div>
+                <div class="progress-track"><i id="liveProgressBar"></i></div>
+                <div class="time-grid"><div><span>経過時間</span><b id="elapsedTime">00:00</b></div><div><span>残り時間</span><b id="etaTime">計算中</b></div><div><span>プロファイル</span><b id="liveProfile">—</b></div></div>
+                <div class="stage-list" id="stageList">
+                  <span data-threshold="8">入力</span><span data-threshold="22">VAE</span><span data-threshold="36">DiT</span><span data-threshold="94">生成</span><span data-threshold="98">保存</span>
+                </div>
+                <div class="stop-actions">
+                  <button type="button" class="stop-save-button" id="stopSaveButton">途中で停止して保存</button>
+                  <button type="button" class="danger-button" id="cancelButton">今すぐ中止</button>
+                </div>
+              </div>
+            </div>
+            <div class="tip-card"><span>QUALITY NOTE</span><p>SageAttentionは高速な近似計算です。完全な数値再現が必要な場合はFast SDPAを選択してください。</p></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-queue">
+        <div class="view-toolbar"><div><h2>生成キュー</h2><p>RTX 3060で一件ずつ安全に処理します</p></div><button class="secondary-button" data-go="generate">＋ 新しい生成</button></div>
+        <div class="jobs-list panel" id="queueList"><div class="empty-list">キューは空です</div></div>
+      </section>
+
+      <section class="view" id="view-library">
+        <div class="view-toolbar library-toolbar"><div><h2>生成ライブラリ</h2><p>過去の映像、設定、実行統計をまとめて確認</p></div><div class="library-tools"><input id="librarySearch" type="search" placeholder="プロンプトやファイル名を検索"><select id="libraryFilter"><option value="all">すべて</option><option value="succeeded">完了</option><option value="failed">失敗</option></select></div></div>
+        <div class="library-grid" id="libraryGrid"><div class="empty-library">生成履歴を読み込んでいます…</div></div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="view-toolbar"><div><h2>エンジン設定</h2><p>変更は次に追加するジョブから適用されます</p></div><button class="primary-button small" id="saveSettings">設定を保存</button></div>
+        <div class="settings-layout">
+          <div class="settings-panel panel">
+            <div class="section-heading"><div><span class="step-number">A</span><h2>Runtime paths</h2></div></div>
+            <div class="path-fields">
+              <label><span>Model registry</span><div><input id="settingConfig" type="text"><i data-ready="config_path"></i></div><small>量子化モデル4種を定義するYAML</small></label>
+              <label><span>maybleMyers/h3 checkout</span><div><input id="settingUpstream" type="text"><i data-ready="upstream_path"></i></div><small>監査済みcommitのMiniMax H3 Engine</small></label>
+              <label><span>Checkpoint support files</span><div><input id="settingCheckpoint" type="text"><i data-ready="checkpoint_dir"></i></div><small>config・scheduler・tokenizerを含むsnapshot</small></label>
+              <label><span>Output directory</span><div><input id="settingOutput" type="text"><i data-ready="output_dir"></i></div></label>
+              <label><span>Python executable</span><div><input id="settingPython" type="text"><i data-ready="python_path"></i></div></label>
+              <label><span>Prompt cache directory</span><div><input id="settingCache" type="text"><i data-ready="prompt_cache_dir"></i></div></label>
+            </div>
+          </div>
+          <aside class="settings-aside">
+            <div class="panel info-panel"><span>LOCAL FIRST</span><h3>ネットワークへ公開しません</h3><p>標準では127.0.0.1だけで待ち受けます。モデルパスと生成操作はこのPC内に留まります。</p></div>
+            <div class="panel hardware-panel" id="hardwarePanel"><h3>Hardware</h3><div class="skeleton-lines"><i></i><i></i><i></i></div></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="videoDialog" class="video-dialog">
+    <button class="dialog-close" id="closeDialog" aria-label="閉じる">×</button>
+    <video id="dialogVideo" controls playsinline></video>
+    <div class="dialog-info"><div><span id="dialogBadge"></span><h2 id="dialogTitle">Generated video</h2><p id="dialogPrompt"></p></div><div id="dialogStats" class="dialog-stats"></div></div>
+  </dialog>
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

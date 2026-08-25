@@ -173,6 +173,55 @@ experimental; a 512-pixel tile was faster but failed the fixed-seed visual gate.
 `--json` emits a machine-readable report. Benchmark JSON is saved under
 `benchmarks/` unless `--no-save-benchmark` is used.
 
+## HAYATE Studio WebUI
+
+HAYATE Studio is a local, ComfyUI-independent generation interface. It keeps
+the audited MiniMax H3 execution path and the four single-file model overrides;
+the browser is an operator surface over the same `GenerationRequest` preflight.
+
+Install the optional server dependencies once:
+
+```powershell
+uv sync --extra generation --extra webui
+```
+
+An exact `uv sync` removes platform-specific packages that are not in the lock
+file. If the Fast Sage profile is required, reinstall the validated
+SageAttention/Triton Windows wheels as described in
+[`docs/SAGEATTENTION_WINDOWS.md`](docs/SAGEATTENTION_WINDOWS.md), then start
+without syncing again:
+
+```powershell
+.\START_HAYATE_WEBUI.cmd
+```
+
+Or start it directly:
+
+```powershell
+.venv\Scripts\hayate.exe webui --host 127.0.0.1 --port 7860 --open-browser
+```
+
+Open `http://127.0.0.1:7860`. The first launch discovers existing MP4 outputs
+and their HAYATE manifests. Runtime paths can then be reviewed and saved from
+the Settings screen.
+
+Studio includes:
+
+- Fast Sage, Fast SDPA, Quality, and fully custom generation profiles;
+- T2V/I2V image upload, duration snapping to MiniMax H3 frame geometry, prompt
+  cache, EasyCache, block swap, activation chunking, and VAE controls;
+- a single-GPU FIFO queue with a cross-process lease shared with the CLI;
+- structured `HAYATE_EVENT` progress, stage timeline, ETA, VRAM/RAM status,
+  persisted job logs, safe stop-and-save, and immediate cancellation;
+- persistent SQLite history, existing-output import, search, video previews,
+  exact settings, duration, and peak VRAM statistics;
+- a responsive desktop/mobile interface with no Node.js requirement at runtime.
+
+The safe default binds only to `127.0.0.1`. There is no authentication layer.
+Do not use `--allow-network` on an untrusted network. Uploaded images, prompts,
+job history, settings, and the SQLite database remain under `data/webui/`; model
+weights are referenced in place and are not copied.
+
 ## v0.1 capabilities
 
 - Windows/Linux/WSL-friendly hardware profiling with GPU 0 selected as the only

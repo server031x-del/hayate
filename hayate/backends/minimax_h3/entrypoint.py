@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from hayate.backends.minimax_h3.easycache import EasyCacheConfig, install_easycache_override
+from hayate.backends.minimax_h3.events import emit_event, install_structured_events
 from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter
 from hayate.backends.minimax_h3.nvfp4_conditioner import install_nvfp4_conditioner_override
 from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_override
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(f"cannot import upstream generation CLI: {script}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    install_structured_events(module)
     install_easycache_override(module, EasyCacheConfig.from_environment())
     install_prompt_cache_override(module, upstream_commit=validation.commit or validation.audited_commit)
     install_w4a8_override(module)
@@ -72,10 +74,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
+    emit_event("process", phase="start", progress=1.0, stage="起動準備", detail="MiniMax H3エンジンを起動しました")
     try:
         module.main()
     finally:
         metrics = _collect_runtime_metrics(module, psutil, torch)
+        emit_event("metrics", runtime_metrics=metrics)
         print("HAYATE_RUNTIME_METRICS " + json.dumps(metrics, sort_keys=True), flush=True)
     return 0
 
