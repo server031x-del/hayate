@@ -134,9 +134,8 @@ def install_nvfp4_conditioner_override() -> None:
             TensorCoreNVFP4Layout,
             TensorWiseINT8Layout,
         )
-        from safetensors import safe_open
-
         from hayate.backends.minimax_h3.w4a8_upstream import _assign_model_tensor
+        from hayate.loaders.tensor_source import CheckpointTensorSource
         from minimax_video.conditioner import _strip_known_prefixes, _wanted_text_key
         from minimax_video.packing import MINIMAX_H3_TEXT_ENCODER_LAYER
 
@@ -145,19 +144,21 @@ def install_nvfp4_conditioner_override() -> None:
         captured_pre_quant: dict[str, torch.Tensor] = {}
         loaded_text: set[str] = set()
         loaded_vision: set[str] = set()
-        # Keep the mmap owner alive with the conditioner. On Windows, tensors backed by a
-        # closed safetensors mapping become invalid; cloning every packed tensor instead
-        # doubles the 15.7 GB checkpoint and exceeds a 32 GB machine's commit budget.
-        handle = safe_open(text_encoder_path, framework="pt", device="cpu")
-        self._hayate_text_encoder_mmap = handle
-        if handle:
-            keys = list(handle.keys())
+        # Linux keeps the mmap owner alive with the conditioner. Windows drains an owned
+        # pread dictionary into the model to avoid native faults at the mmap/Torch boundary.
+        source = CheckpointTensorSource(text_encoder_path)
+        self._hayate_text_encoder_source = source
+        logger.info("HAYATE NVFP4/AWQ tensor source: %s", source.backend)
+        if source:
+            keys = list(source.keys())
             marker_formats: dict[str, str] = {}
             for key in keys:
                 if not key.endswith(".comfy_quant"):
                     continue
                 try:
-                    marker = json.loads(bytes(handle.get_tensor(key).tolist()).decode("utf-8"))
+                    marker = json.loads(
+                        bytes(source.take_tensor(key).tolist()).decode("utf-8")
+                    )
                 except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     continue
                 marker_formats[key[: -len(".comfy_quant")]] = marker.get("format", "")
@@ -178,10 +179,10 @@ def install_nvfp4_conditioner_override() -> None:
                     continue
 
                 if format_name in {"nvfp4", "int8_tensorwise"}:
-                    qdata = handle.get_tensor(key)
+                    qdata = source.take_tensor(key)
                     if format_name == "nvfp4":
-                        block_scale = handle.get_tensor(prefix + ".weight_scale")
-                        tensor_scale = handle.get_tensor(prefix + ".weight_scale_2")
+                        block_scale = source.take_tensor(prefix + ".weight_scale")
+                        tensor_scale = source.take_tensor(prefix + ".weight_scale_2")
                         params = TensorCoreNVFP4Layout.Params(
                             scale=tensor_scale,
                             block_scale=block_scale,
@@ -193,9 +194,9 @@ def install_nvfp4_conditioner_override() -> None:
                         if pre_key in keys:
                             normalized = _normalized_text_prefix(prefix)
                             if normalized is not None:
-                                captured_pre_quant[normalized] = handle.get_tensor(pre_key)
+                                captured_pre_quant[normalized] = source.take_tensor(pre_key)
                     else:
-                        scale = handle.get_tensor(prefix + ".weight_scale")
+                        scale = source.take_tensor(prefix + ".weight_scale")
                         params = TensorWiseINT8Layout.Params(
                             scale=scale,
                             orig_dtype=self.dtype,
@@ -212,7 +213,7 @@ def install_nvfp4_conditioner_override() -> None:
                             continue
                     elif not vision_part:
                         continue
-                    value = handle.get_tensor(key)
+                    value = source.take_tensor(key)
                     if value.is_floating_point() and value.dtype != self.dtype:
                         value = value.to(self.dtype)
 
@@ -245,6 +246,9 @@ def install_nvfp4_conditioner_override() -> None:
                 f"vision strict staged load failed: {len(missing)} missing, "
                 f"{len(unexpected)} unexpected; examples={missing[:5] + unexpected[:5]}"
             )
+        if source.backend == "pread":
+            source.close()
+            self._hayate_text_encoder_source = None
 
         from minimax_video.qwen3vl_text import Qwen3VLTextRotaryEmbedding
         from minimax_video.qwen3vl_vision import Qwen3VLVisionRotaryEmbedding

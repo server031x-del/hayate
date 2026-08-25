@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from hayate.errors import LoaderValidationError
+from hayate.loaders.tensor_source import CheckpointTensorSource
 
 
 class INT8ConvRotCheckpointBinding:
@@ -59,6 +60,7 @@ class INT8ConvRotCheckpointBinding:
         *,
         device: str = "cpu",
         orig_dtype: str = "float32",
+        source: CheckpointTensorSource | None = None,
     ) -> dict:
         try:
             import torch
@@ -71,10 +73,15 @@ class INT8ConvRotCheckpointBinding:
         dtype = getattr(torch, orig_dtype, None)
         if dtype not in (torch.float16, torch.bfloat16, torch.float32):
             raise LoaderValidationError(f"unsupported INT8 ConvRot logical dtype: {orig_dtype}")
-        with safe_open(self.path, framework="pt", device="cpu") as handle:
-            qdata = handle.get_tensor(prefix + ".weight").clone()
-            scale = handle.get_tensor(prefix + ".weight_scale").clone()
-            marker_tensor = handle.get_tensor(prefix + ".comfy_quant").clone()
+        if source is None:
+            with safe_open(self.path, framework="pt", device="cpu") as handle:
+                qdata = handle.get_tensor(prefix + ".weight").clone()
+                scale = handle.get_tensor(prefix + ".weight_scale").clone()
+                marker_tensor = handle.get_tensor(prefix + ".comfy_quant").clone()
+        else:
+            qdata = source.take_tensor(prefix + ".weight", copy_mmap=True)
+            scale = source.take_tensor(prefix + ".weight_scale", copy_mmap=True)
+            marker_tensor = source.take_tensor(prefix + ".comfy_quant", copy_mmap=True)
         marker = json.loads(bytes(marker_tensor.tolist()).decode("utf-8"))
         if (
             marker.get("format") != "int8_tensorwise"

@@ -73,6 +73,12 @@ uv run hayate kernel-check
 The inspection CLI itself does not require PyTorch and does not load model
 payloads.
 
+On Windows, HAYATE uses safetensors 0.8 `pread` loading by default for the
+large direct-loader checkpoints. This avoids intermittent native access
+violations observed at the mmap/Torch boundary and lowers committed virtual
+memory. `HAYATE_SAFETENSORS_BACKEND=mmap` restores the faster legacy path for
+controlled comparison runs; it is not recommended for normal Windows use.
+
 ## Configure models without copying them
 
 Edit `configs/models.yaml`, or copy it to the ignored
@@ -142,6 +148,8 @@ tiling. Remove `--dry-run` only after preflight reports `READY`.
 - A non-importing adapter for the pinned upstream MiniMax-H3 engine contract.
 - Prompt-cache fingerprints covering the upstream commit, text-encoder file,
   and image/reference contents, with crash-safe atomic cache replacement.
+- Windows-native `pread` loading for large safetensors checkpoints, avoiding
+  intermittent `torch_cpu.dll` access violations at the mmap boundary.
 
 ## Current execution support
 

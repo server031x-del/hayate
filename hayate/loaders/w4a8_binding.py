@@ -7,6 +7,7 @@ from typing import Any
 
 from hayate.errors import LoaderValidationError
 from hayate.models.safetensors_header import read_safetensors_header
+from hayate.loaders.tensor_source import CheckpointTensorSource
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ class W4A8CheckpointBinding:
         *,
         device: str = "cpu",
         orig_dtype: str = "bfloat16",
+        source: CheckpointTensorSource | None = None,
     ) -> dict[str, Any]:
         """Reuse upstream's exact row/key conversion for a packed W4A8 layer."""
 
@@ -114,11 +116,17 @@ class W4A8CheckpointBinding:
         dtype = getattr(torch, orig_dtype, None)
         if dtype not in (torch.float16, torch.bfloat16, torch.float32):
             raise LoaderValidationError(f"unsupported W4A8 logical dtype: {orig_dtype}")
-        with safe_open(self.path, framework="pt", device="cpu") as handle:
-            qdata = handle.get_tensor(prefix + ".weight").clone()
-            relative = handle.get_tensor(prefix + ".weight_s_rel").clone()
-            channel = handle.get_tensor(prefix + ".weight_s_channel").clone()
-            codebook = handle.get_tensor(prefix + ".weight_codebook").clone()
+        if source is None:
+            with safe_open(self.path, framework="pt", device="cpu") as handle:
+                qdata = handle.get_tensor(prefix + ".weight").clone()
+                relative = handle.get_tensor(prefix + ".weight_s_rel").clone()
+                channel = handle.get_tensor(prefix + ".weight_s_channel").clone()
+                codebook = handle.get_tensor(prefix + ".weight_codebook").clone()
+        else:
+            qdata = source.take_tensor(prefix + ".weight", copy_mmap=True)
+            relative = source.take_tensor(prefix + ".weight_s_rel", copy_mmap=True)
+            channel = source.take_tensor(prefix + ".weight_s_channel", copy_mmap=True)
+            codebook = source.take_tensor(prefix + ".weight_codebook", copy_mmap=True)
 
         def convert_rows(value):
             return converter(prefix + ".weight", value, qkv_head_dim=0)

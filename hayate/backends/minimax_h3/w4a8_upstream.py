@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from hayate.loaders.int8_convrot_binding import INT8ConvRotCheckpointBinding
+from hayate.loaders.tensor_source import CheckpointTensorSource
 from hayate.loaders.w4a8_binding import W4A8CheckpointBinding
 
 logger = logging.getLogger(__name__)
@@ -216,8 +217,6 @@ def load_w4a8_transformer(
         )
     import torch
     from accelerate import init_empty_weights
-    from safetensors import safe_open
-
     from minimax_video.int8_quant import convert_int8_dit_tensor
     from minimax_video.model_loader import _is_fp32_key
     from minimax_video.transformer import MiniMaxH3Transformer3DModel
@@ -244,11 +243,13 @@ def load_w4a8_transformer(
     }
     expected_keys = set(model.state_dict())
     loaded_keys: set[str] = set()
-    with safe_open(checkpoint_path, framework="pt", device="cpu") as handle:
-        for key in handle.keys():
+    with CheckpointTensorSource(checkpoint_path) as source:
+        keys = source.keys()
+        logger.info("HAYATE W4A8 tensor source: %s", source.backend)
+        for key in keys:
             if key in quantized_names:
                 continue
-            value = handle.get_tensor(key).clone()
+            value = source.take_tensor(key, copy_mmap=True)
             for native_key, converted in convert_int8_dit_tensor(key, value, qkv_head_dim=0):
                 if _is_fp32_key(native_key) or native_key == "adaln_t_table":
                     target_dtype = torch.float32
@@ -266,13 +267,17 @@ def load_w4a8_transformer(
                 _assign_model_tensor(model, native_key, assigned)
                 loaded_keys.add(native_key)
 
-    for index, prefix in enumerate(binding.layer_prefixes, start=1):
-        converted = binding.materialize_converted(prefix, convert_int8_dit_tensor)
-        for native_key, value in converted.items():
-            _assign_model_tensor(model, native_key, value)
-            loaded_keys.add(native_key)
-        if index % 20 == 0:
-            logger.info("HAYATE W4A8 binding: %d/%d layers", index, len(binding.layer_prefixes))
+        for index, prefix in enumerate(binding.layer_prefixes, start=1):
+            converted = binding.materialize_converted(
+                prefix, convert_int8_dit_tensor, source=source
+            )
+            for native_key, value in converted.items():
+                _assign_model_tensor(model, native_key, value)
+                loaded_keys.add(native_key)
+            if index % 20 == 0:
+                logger.info(
+                    "HAYATE W4A8 binding: %d/%d layers", index, len(binding.layer_prefixes)
+                )
 
     missing = expected_keys - loaded_keys
     unexpected = loaded_keys - expected_keys
@@ -450,8 +455,6 @@ def _load_single_weight_audio_vae(
     """Load the public FP32 audio VAE after matching its merged-weight layout."""
 
     import torch
-    from safetensors import safe_open
-
     from minimax_video.model_loader import _from_config
     from minimax_video.vae_audio import AutoencoderKLMiniMaxH3Audio
 
@@ -460,11 +463,13 @@ def _load_single_weight_audio_vae(
     model = _from_config(AutoencoderKLMiniMaxH3Audio, str(config_path), dtype)
     removed = remove_weight_norm_tree(model)
     state: dict[str, torch.Tensor] = {}
-    with safe_open(checkpoint_path, framework="pt", device="cpu") as handle:
-        for key in handle.keys():
+    with CheckpointTensorSource(checkpoint_path) as source:
+        logger.info("HAYATE Audio VAE tensor source: %s", source.backend)
+        for key in source.keys():
             if key in {"latents_mean", "latents_std"}:
+                source.take_tensor(key, copy_mmap=True)
                 continue
-            value = handle.get_tensor(key).clone()
+            value = source.take_tensor(key, copy_mmap=True)
             state[key] = value.to(dtype) if value.is_floating_point() else value
     info = model.load_state_dict(state, strict=True, assign=True)
     logger.info(
@@ -484,8 +489,6 @@ def _load_int8_convrot_video_vae(
     vae_dtype,
 ):
     import torch
-    from safetensors import safe_open
-
     from _convert_minimax_h3_upstream import convert_video_vae_key
     from minimax_video.model_loader import _from_config
     from minimax_video.vae_video import AutoencoderKLMiniMaxH3
@@ -497,8 +500,9 @@ def _load_int8_convrot_video_vae(
     model.requires_grad_(False)
     binding = INT8ConvRotCheckpointBinding(checkpoint_path)
     state: dict[str, torch.Tensor] = {}
-    with safe_open(checkpoint_path, framework="pt", device="cpu") as handle:
-        keys = set(handle.keys())
+    with CheckpointTensorSource(checkpoint_path) as source:
+        logger.info("HAYATE INT8 Video VAE tensor source: %s", source.backend)
+        keys = set(source.keys())
         prefixes = sorted(
             key[: -len(".weight")]
             for key in keys
@@ -511,26 +515,28 @@ def _load_int8_convrot_video_vae(
             for prefix in prefixes
             for suffix in (".weight", ".weight_scale", ".comfy_quant")
         }
-        for key in handle.keys():
+        for key in tuple(keys):
             if key in skipped:
                 continue
             if key in {"latents_mean", "latents_std"}:
+                source.take_tensor(key, copy_mmap=True)
                 continue
-            value = handle.get_tensor(key).clone()
+            value = source.take_tensor(key, copy_mmap=True)
             for native_key, converted in convert_video_vae_key(key, value, converter_config):
                 state[native_key] = (
                     converted.to(vae_dtype) if converted.is_floating_point() else converted
                 )
-    for index, prefix in enumerate(prefixes, start=1):
-        state.update(binding.materialize_converted(
-            prefix,
-            convert_video_vae_key,
-            converter_config,
-            device="cpu",
-            orig_dtype=str(vae_dtype).removeprefix("torch."),
-        ))
-        if index % 24 == 0:
-            logger.info("HAYATE INT8 Video VAE binding: %d/%d layers", index, len(prefixes))
+        for index, prefix in enumerate(prefixes, start=1):
+            state.update(binding.materialize_converted(
+                prefix,
+                convert_video_vae_key,
+                converter_config,
+                device="cpu",
+                orig_dtype=str(vae_dtype).removeprefix("torch."),
+                source=source,
+            ))
+            if index % 24 == 0:
+                logger.info("HAYATE INT8 Video VAE binding: %d/%d layers", index, len(prefixes))
     info = model.load_state_dict(state, strict=True, assign=True)
     logger.info("HAYATE INT8 Video VAE load: %s", info)
     model.eval().requires_grad_(False)

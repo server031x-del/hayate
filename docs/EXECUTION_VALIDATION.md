@@ -68,3 +68,28 @@ These two runs do not establish quantized-versus-unquantized quality
 equivalence because matching unquantized target weights were not available on
 the reference host. Any claimed optimization comparison must keep seed, prompt,
 resolution, frame count, scheduler, and model weights identical.
+
+## Windows non-mmap checkpoint loading
+
+An intermittent Windows native access violation was observed in
+`torch_cpu.dll` while constructing the large W4A8 checkpoint through
+`safetensors.safe_open`. HAYATE now selects the safetensors 0.8 `pread` backend
+on Windows and drains each owned tensor into its destination model. Linux keeps
+the mmap path, and Windows comparison runs can opt back into it with
+`HAYATE_SAFETENSORS_BACKEND=mmap`.
+
+The same cached-prompt 256x256, 5-frame, 3-point generation was run with both
+backends:
+
+| Backend | Wall time | Peak process working set | Peak private bytes | Peak CUDA allocation |
+|---|---:|---:|---:|---:|
+| mmap | 55.3 s | 20.45 GB | 49.41 GB | 3.84 GB |
+| pread | 66.4 s | 17.65 GB | 25.49 GB | 3.84 GB |
+
+Both MP4 files have the identical SHA-256
+`1c6030e75321df8982330847dcf603167717cd06ed15e5fd5be6972e427e101b`
+and contain H.264 256x256 video plus AAC 32 kHz stereo audio. The stable path
+cost 11.1 seconds in this short load-dominated run while reducing peak private
+accounting by 23.92 GB. A standalone pread load also strict-loaded all 635 W4A8
+Transformer tensors with zero meta tensors and all NVFP4/AWQ conditioner
+weights with zero meta tensors.
