@@ -13,6 +13,33 @@ from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_overrid
 from hayate.backends.minimax_h3.w4a8_upstream import install_w4a8_override
 
 
+def _collect_runtime_metrics(module, psutil, torch) -> dict:
+    metrics = {}
+    try:
+        memory = psutil.Process().memory_info()
+        metrics["process_rss_bytes"] = int(memory.rss)
+        metrics["process_peak_rss_bytes"] = int(getattr(memory, "peak_wset", memory.rss))
+        metrics["process_private_bytes"] = int(getattr(memory, "private", memory.vms))
+        metrics["process_peak_private_bytes"] = int(
+            getattr(memory, "peak_pagefile", getattr(memory, "private", memory.vms))
+        )
+    except Exception as exc:
+        metrics["process_metrics_error"] = f"{type(exc).__name__}: {exc}"
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+            metrics["cuda_peak_allocated_bytes"] = int(torch.cuda.max_memory_allocated())
+            metrics["cuda_peak_reserved_bytes"] = int(torch.cuda.max_memory_reserved())
+        except Exception as exc:
+            # Metrics are diagnostic. Preserve the generation exception when
+            # CUDA is already in a failed state instead of masking it here.
+            metrics["cuda_metrics_error"] = f"{type(exc).__name__}: {exc}"
+    controller = getattr(module, "_hayate_easycache_controller", None)
+    if controller is not None:
+        metrics["easycache"] = controller.stats()
+    return metrics
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--upstream", type=Path, required=True)
@@ -46,21 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         module.main()
     finally:
-        metrics = {}
-        memory = psutil.Process().memory_info()
-        metrics["process_rss_bytes"] = int(memory.rss)
-        metrics["process_peak_rss_bytes"] = int(getattr(memory, "peak_wset", memory.rss))
-        metrics["process_private_bytes"] = int(getattr(memory, "private", memory.vms))
-        metrics["process_peak_private_bytes"] = int(
-            getattr(memory, "peak_pagefile", getattr(memory, "private", memory.vms))
-        )
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            metrics["cuda_peak_allocated_bytes"] = int(torch.cuda.max_memory_allocated())
-            metrics["cuda_peak_reserved_bytes"] = int(torch.cuda.max_memory_reserved())
-        controller = getattr(module, "_hayate_easycache_controller", None)
-        if controller is not None:
-            metrics["easycache"] = controller.stats()
+        metrics = _collect_runtime_metrics(module, psutil, torch)
         print("HAYATE_RUNTIME_METRICS " + json.dumps(metrics, sort_keys=True), flush=True)
     return 0
 

@@ -38,6 +38,7 @@ class GenerationRequest:
     easycache_threshold: float = 0.2
     easycache_start: float = 0.15
     easycache_end: float = 0.95
+    easycache_max_consecutive_skips: int = 2
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,7 @@ class GenerationPlan:
                 "easycache_threshold": self.request.easycache_threshold,
                 "easycache_start": self.request.easycache_start,
                 "easycache_end": self.request.easycache_end,
+                "easycache_max_consecutive_skips": self.request.easycache_max_consecutive_skips,
             },
         }
 
@@ -166,6 +168,8 @@ class ExternalH3GenerationBackend:
             issues.append("easycache_threshold must be non-negative")
         if not 0 <= request.easycache_start < request.easycache_end <= 1:
             issues.append("easycache range must satisfy 0 <= start < end <= 1")
+        if request.easycache_max_consecutive_skips < 1:
+            issues.append("easycache_max_consecutive_skips must be at least one")
         for label, path in (
             ("first image", request.image_path),
             ("last image", request.last_image_path),
@@ -290,6 +294,9 @@ class ExternalH3GenerationBackend:
                     "HAYATE_EASYCACHE_THRESHOLD": str(request.easycache_threshold),
                     "HAYATE_EASYCACHE_START": str(request.easycache_start),
                     "HAYATE_EASYCACHE_END": str(request.easycache_end),
+                    "HAYATE_EASYCACHE_MAX_CONSECUTIVE_SKIPS": str(
+                        request.easycache_max_consecutive_skips
+                    ),
                 }
             )
         return GenerationPlan(

@@ -138,12 +138,14 @@ uv run hayate generate `
   --config configs/models.local.yaml `
   --prompt "A cinematic scene" `
   --output outputs/hayate-fast.mp4 `
-  --steps 20 --easycache
+  --rtx3060-fast
 ```
 
-The defaults match the common `0.2` threshold and `0.15`–`0.95` sampling
-window. EasyCache is opt-in because skipped Transformer evaluations trade a
-small amount of numerical fidelity for speed.
+The conservative defaults match the common `0.2` threshold and `0.15`–`0.95`
+sampling window. The RTX 3060 fast profile above raises the HAYATE integration
+threshold to `0.4`, but forces a real Transformer evaluation after at most two
+cached calls. EasyCache is opt-in because skipped Transformer evaluations trade
+a small amount of numerical fidelity for speed.
 
 `--verbose` prints every tensor name, shape, dtype, and physical storage size.
 `--json` emits a machine-readable report. Benchmark JSON is saved under

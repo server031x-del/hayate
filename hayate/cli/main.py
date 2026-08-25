@@ -91,6 +91,15 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--easycache-threshold", type=float, default=0.2)
     generate_parser.add_argument("--easycache-start", type=float, default=0.15)
     generate_parser.add_argument("--easycache-end", type=float, default=0.95)
+    generate_parser.add_argument("--easycache-max-consecutive-skips", type=int, default=2)
+    generate_parser.add_argument(
+        "--rtx3060-fast",
+        action="store_true",
+        help=(
+            "apply the validated RTX 3060 fast profile: 20 points, EasyCache 0.4, "
+            "two consecutive skips, 49 swapped blocks, and 32768-row chunks"
+        ),
+    )
     generate_parser.add_argument("--dry-run", action="store_true")
     generate_parser.add_argument("--json", action="store_true", dest="as_json")
 
@@ -286,6 +295,15 @@ def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
 
 
 def run_generate(args: argparse.Namespace, console: Console) -> int:
+    if args.rtx3060_fast:
+        args.steps = 20
+        args.easycache = True
+        args.easycache_threshold = 0.4
+        args.easycache_start = 0.15
+        args.easycache_end = 0.95
+        args.easycache_max_consecutive_skips = 2
+        args.blocks_to_swap = 49
+        args.activation_chunk_rows = 32768
     config_path = (args.config or _default_config()).resolve(strict=False)
     backend = ExternalH3GenerationBackend(
         args.upstream,
@@ -312,6 +330,7 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         easycache_threshold=args.easycache_threshold,
         easycache_start=args.easycache_start,
         easycache_end=args.easycache_end,
+        easycache_max_consecutive_skips=args.easycache_max_consecutive_skips,
     )
     plan = backend.plan(request)
     payload = plan.to_dict()

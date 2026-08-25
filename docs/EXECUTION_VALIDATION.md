@@ -93,6 +93,23 @@ Contact-sheet inspection shows a consistent silver sports car moving from a
 coastal highway into a modern city setting. This run validates the optimized
 execution path, not numerical equivalence to an uncached 20-point baseline.
 
+The same fixed prompt and seed were repeated after correcting EasyCache's
+full-to-full transformation-rate calibration, with threshold `0.4` and a hard
+limit of two consecutive skips:
+
+| EasyCache profile | Full DiT calls | Skipped | Denoise | Total |
+|---|---:|---:|---:|---:|
+| conservative (`0.2`) | 13 | 6 | 11m 22s | 874.75 s |
+| RTX 3060 fast (`0.4`, max 2) | 10 | 9 | 8m 47s | 724.14 s |
+
+The fast profile reduced total wall time by 150.62 seconds (17.2%) without
+changing peak CUDA allocation/reservation. It produced the same 243-frame,
+10.125-second video/audio contract. FFmpeg found no black/freeze interval or
+NaN/Inf audio samples; contact-sheet inspection retained the silver car,
+coastal highway, and city sequence. Framewise SSIM against the conservative
+cached run was `0.863170`; this is a speed/quality comparison between two cached
+runs, not an uncached-fidelity score.
+
 ## Windows non-mmap checkpoint loading
 
 An intermittent Windows native access violation was observed in

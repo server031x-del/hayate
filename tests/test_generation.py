@@ -70,3 +70,4 @@ def test_generation_plan_maps_four_single_file_overrides_and_memory_flags(tmp_pa
     assert command[command.index("--infer_steps") + 1] == "50"
     assert plan.environment["HAYATE_EASYCACHE"] == "1"
     assert plan.environment["HAYATE_EASYCACHE_THRESHOLD"] == "0.2"
+    assert plan.environment["HAYATE_EASYCACHE_MAX_CONSECUTIVE_SKIPS"] == "2"
