@@ -87,6 +87,10 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--blocks-to-swap", type=int, default=49)
     generate_parser.add_argument("--activation-chunk-rows", type=int, default=32768)
     generate_parser.add_argument("--prompt-cache", type=Path, default=None)
+    generate_parser.add_argument("--easycache", action="store_true")
+    generate_parser.add_argument("--easycache-threshold", type=float, default=0.2)
+    generate_parser.add_argument("--easycache-start", type=float, default=0.15)
+    generate_parser.add_argument("--easycache-end", type=float, default=0.95)
     generate_parser.add_argument("--dry-run", action="store_true")
     generate_parser.add_argument("--json", action="store_true", dest="as_json")
 
@@ -304,6 +308,10 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         blocks_to_swap=args.blocks_to_swap,
         activation_chunk_rows=args.activation_chunk_rows,
         prompt_cache=args.prompt_cache,
+        easycache=args.easycache,
+        easycache_threshold=args.easycache_threshold,
+        easycache_start=args.easycache_start,
+        easycache_end=args.easycache_end,
     )
     plan = backend.plan(request)
     payload = plan.to_dict()

@@ -23,3 +23,8 @@ so its code is not copied without a license grant.
 
 MiniMax-H3 model weights are separately licensed by MiniMax. HAYATE does not
 ship model weights and does not change their license terms.
+
+HAYATE's runtime-adaptive transformer cache is an independent MiniMax-H3
+integration based on the algorithm published by
+[`H-EmbodVis/EasyCache`](https://github.com/H-EmbodVis/EasyCache), licensed
+under Apache-2.0. HAYATE does not copy ComfyUI's GPL EasyCache integration.

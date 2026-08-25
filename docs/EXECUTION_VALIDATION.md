@@ -69,6 +69,30 @@ equivalence because matching unquantized target weights were not available on
 the reference host. Any claimed optimization comparison must keep seed, prompt,
 resolution, frame count, scheduler, and model weights identical.
 
+## 512x512 ten-second EasyCache generation
+
+A text-to-video-and-audio automotive commercial was generated with 243 frames
+at 24 fps (10.125 seconds), 512x512 resolution, seed `20260825`, 20 scheduler
+points, and EasyCache defaults (`0.2`, active from `0.15` through `0.95`). The
+prompt embedding was read from a validated HAYATE prompt cache.
+
+The upstream denoise loop made 19 cache-controller calls. Six Transformer
+evaluations were skipped and 13 were computed, a theoretical DiT-only speedup
+of `19 / 13 = 1.46x`. Denoising took 11 minutes 22 seconds and total generation,
+including model loading, VAE decode, and MP4 encoding, took 874.75 seconds
+(14 minutes 34.75 seconds).
+
+Peak process working set was 16.49 GiB, peak private bytes 27.50 GiB, peak CUDA
+allocation 5.54 GiB, and peak CUDA reservation 7.48 GiB. The output contains
+H.264 512x512 video with exactly 243 frames and AAC 32 kHz stereo audio; both
+streams are 10.125 seconds. FFmpeg reported no black/freeze interval and the
+audio contains zero NaN/Inf samples. Decoded AAC peak is +0.67 dBFS, so a
+production delivery should add a small true-peak limiter or attenuation pass.
+
+Contact-sheet inspection shows a consistent silver sports car moving from a
+coastal highway into a modern city setting. This run validates the optimized
+execution path, not numerical equivalence to an uncached 20-point baseline.
+
 ## Windows non-mmap checkpoint loading
 
 An intermittent Windows native access violation was observed in

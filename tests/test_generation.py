@@ -49,7 +49,14 @@ def test_generation_plan_maps_four_single_file_overrides_and_memory_flags(tmp_pa
         python=Path(__import__("sys").executable),
     )
     plan = backend.plan(
-        GenerationRequest("test", checkpoint, tmp_path / "out.mp4", height=512, width=768)
+        GenerationRequest(
+            "test",
+            checkpoint,
+            tmp_path / "out.mp4",
+            height=512,
+            width=768,
+            easycache=True,
+        )
     )
 
     command = list(plan.command)
@@ -61,3 +68,5 @@ def test_generation_plan_maps_four_single_file_overrides_and_memory_flags(tmp_pa
     assert "--vae_tiling" in command
     assert command[command.index("--attn_mode") + 1] == "sdpa"
     assert command[command.index("--infer_steps") + 1] == "50"
+    assert plan.environment["HAYATE_EASYCACHE"] == "1"
+    assert plan.environment["HAYATE_EASYCACHE_THRESHOLD"] == "0.2"

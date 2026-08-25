@@ -127,6 +127,24 @@ upstream 50-point sigma grid, swaps 49 transformer blocks, streams the text
 encoder with zero resident decoder layers, chunks activations, and enables VAE
 tiling. Remove `--dry-run` only after preflight reports `READY`.
 
+For a faster 20-point run, HAYATE can wrap the upstream Transformer with an
+Apache-2.0 EasyCache-derived runtime-adaptive residual cache while leaving the
+upstream pipeline, schedulers, and VAE stages intact:
+
+```powershell
+uv run hayate generate `
+  --upstream M:/path/to/maybleMyers-h3 `
+  --ckpt-dir M:/path/to/MiniMax-H3-snapshot `
+  --config configs/models.local.yaml `
+  --prompt "A cinematic scene" `
+  --output outputs/hayate-fast.mp4 `
+  --steps 20 --easycache
+```
+
+The defaults match the common `0.2` threshold and `0.15`–`0.95` sampling
+window. EasyCache is opt-in because skipped Transformer evaluations trade a
+small amount of numerical fidelity for speed.
+
 `--verbose` prints every tensor name, shape, dtype, and physical storage size.
 `--json` emits a machine-readable report. Benchmark JSON is saved under
 `benchmarks/` unless `--no-save-benchmark` is used.
@@ -148,6 +166,8 @@ tiling. Remove `--dry-run` only after preflight reports `READY`.
 - A non-importing adapter for the pinned upstream MiniMax-H3 engine contract.
 - Prompt-cache fingerprints covering the upstream commit, text-encoder file,
   and image/reference contents, with crash-safe atomic cache replacement.
+- Opt-in MiniMax-H3 EasyCache with video/audio residuals, caller-owned tensor
+  preservation, configurable threshold/window, and runtime skip telemetry.
 - Windows-native `pread` loading for large safetensors checkpoints, avoiding
   intermittent `torch_cpu.dll` access violations at the mmap boundary.
 

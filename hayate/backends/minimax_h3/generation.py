@@ -34,6 +34,10 @@ class GenerationRequest:
     blocks_to_swap: int = 49
     activation_chunk_rows: int = 32768
     prompt_cache: Path | None = None
+    easycache: bool = False
+    easycache_threshold: float = 0.2
+    easycache_start: float = 0.15
+    easycache_end: float = 0.95
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,10 @@ class GenerationPlan:
                     if self.request.prompt_cache is not None
                     else None
                 ),
+                "easycache": self.request.easycache,
+                "easycache_threshold": self.request.easycache_threshold,
+                "easycache_start": self.request.easycache_start,
+                "easycache_end": self.request.easycache_end,
             },
         }
 
@@ -154,6 +162,10 @@ class ExternalH3GenerationBackend:
             issues.append("blocks_to_swap must be in the range 0..49")
         if request.activation_chunk_rows < 0:
             issues.append("activation_chunk_rows must be non-negative")
+        if request.easycache_threshold < 0:
+            issues.append("easycache_threshold must be non-negative")
+        if not 0 <= request.easycache_start < request.easycache_end <= 1:
+            issues.append("easycache range must satisfy 0 <= start < end <= 1")
         for label, path in (
             ("first image", request.image_path),
             ("last image", request.last_image_path),
@@ -207,6 +219,8 @@ class ExternalH3GenerationBackend:
             warnings.append("fewer than 40 swapped blocks is unlikely to fit an RTX 3060 12GB")
         if request.task == "ref2va":
             warnings.append("the initial W4A8 target is FL2VA; ref2va needs its matching transformer layout")
+        if request.easycache:
+            warnings.append("EasyCache trades a small amount of numerical fidelity for generation speed")
 
         command = [
             str(self.python),
@@ -269,6 +283,15 @@ class ExternalH3GenerationBackend:
         environment = (
             {} if os.name == "nt" else {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
         )
+        if request.easycache:
+            environment.update(
+                {
+                    "HAYATE_EASYCACHE": "1",
+                    "HAYATE_EASYCACHE_THRESHOLD": str(request.easycache_threshold),
+                    "HAYATE_EASYCACHE_START": str(request.easycache_start),
+                    "HAYATE_EASYCACHE_END": str(request.easycache_end),
+                }
+            )
         return GenerationPlan(
             request,
             tuple(command),
