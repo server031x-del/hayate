@@ -215,7 +215,8 @@ Studio includes:
   persisted job logs, safe stop-and-save, and immediate cancellation;
 - persistent SQLite history, existing-output import, search, video previews,
   exact settings, duration, and peak VRAM statistics;
-- a responsive desktop/mobile interface with no Node.js requirement at runtime.
+- a readable responsive desktop/mobile interface with persistent Dark/Clear
+  display modes and no Node.js requirement at runtime.
 
 The safe default binds only to `127.0.0.1`. There is no authentication layer.
 Do not use `--allow-network` on an untrusted network. Uploaded images, prompts,

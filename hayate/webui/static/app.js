@@ -8,6 +8,7 @@ const state = {
   eventSource: null,
   duration: 5,
   imageAsset: null,
+  dialogTrigger: null,
   resourceTimer: null,
   elapsedTimer: null,
 };
@@ -23,6 +24,35 @@ const statusLabels = {
   queued: "待機中", running: "生成中", stopping: "途中保存中", cancelling: "停止中",
   succeeded: "完了", partial: "途中保存", failed: "失敗", cancelled: "中止", interrupted: "中断",
 };
+
+const THEME_KEY = "hayate-studio-theme";
+
+function savedTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) || "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+function applyTheme(theme, persist = true) {
+  const selected = theme === "clear" ? "clear" : "dark";
+  document.documentElement.dataset.theme = selected;
+  const button = $("#themeButton");
+  if (button) {
+    const clear = selected === "clear";
+    button.setAttribute("aria-pressed", String(clear));
+    button.title = clear ? "Darkモードに切り替え" : "Clearモードに切り替え";
+    button.setAttribute("aria-label", button.title);
+    $("#themeLabel").textContent = clear ? "DARK" : "CLEAR";
+  }
+  document.querySelector('meta[name="theme-color"]')?.setAttribute(
+    "content", selected === "clear" ? "#eef5fb" : "#070b12"
+  );
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, selected); } catch { /* optional */ }
+  }
+}
 
 async function api(path, options = {}) {
   const request = { ...options, headers: { ...(options.headers || {}) } };
@@ -272,6 +302,7 @@ function renderLive(job) {
   $("#liveDetail").textContent = job.detail || "—";
   $("#livePercent").textContent = `${Math.round(progress)}%`;
   $("#liveProgressBar").style.width = `${progress}%`;
+  $("#liveProgressTrack").setAttribute("aria-valuenow", String(Math.round(progress)));
   $("#elapsedTime").textContent = clock(activeElapsed(job));
   $("#etaTime").textContent = job.eta_seconds === 0 ? "完了" : clock(job.eta_seconds);
   $("#liveProfile").textContent = String(job.request?.profile || "history").replace("fast_sage", "Fast Sage").replace("fast", "Fast SDPA").replace("quality", "Quality");
@@ -373,6 +404,7 @@ function openJob(jobId) {
   }
   const request = job.request || job.plan?.request || {};
   const dialog = $("#videoDialog");
+  state.dialogTrigger = document.activeElement;
   $("#dialogVideo").src = `/api/jobs/${job.id}/media`;
   $("#dialogBadge").textContent = statusLabels[job.status].toUpperCase();
   $("#dialogTitle").textContent = (job.output_path || "Generated video").split(/[\\/]/).pop();
@@ -486,15 +518,25 @@ function bindEvents() {
   $("#stopSaveButton").addEventListener("click", () => stopActive(true));
   $("#cancelButton").addEventListener("click", () => stopActive(false));
   $("#refreshButton").addEventListener("click", async () => { await Promise.all([refreshJobs(), pollResources()]); toast("最新情報に更新しました"); });
+  $("#themeButton").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "clear" ? "dark" : "clear";
+    applyTheme(next);
+  });
   $("#saveSettings").addEventListener("click", saveSettings);
   $("#librarySearch").addEventListener("input", renderLibrary); $("#libraryFilter").addEventListener("change", renderLibrary);
   document.addEventListener("click", (event) => { const target = event.target.closest("[data-open-job]"); if (target) openJob(target.dataset.openJob); });
   $("#closeDialog").addEventListener("click", () => $("#videoDialog").close());
-  $("#videoDialog").addEventListener("close", () => { $("#dialogVideo").pause(); $("#dialogVideo").removeAttribute("src"); });
+  $("#videoDialog").addEventListener("close", () => {
+    $("#dialogVideo").pause();
+    $("#dialogVideo").removeAttribute("src");
+    state.dialogTrigger?.focus?.();
+    state.dialogTrigger = null;
+  });
   document.addEventListener("keydown", (event) => { if (event.ctrlKey && event.key === "Enter" && $("#view-generate").classList.contains("active")) submitGeneration(event); });
 }
 
 async function initialize() {
+  applyTheme(savedTheme(), false);
   bindEvents();
   $("#prompt").dispatchEvent(new Event("input"));
   updateDuration(); updateResolution(); applyProfile("fast_sage");

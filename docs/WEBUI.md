@@ -5,6 +5,9 @@ pipeline. Every submitted request is converted to `GenerationRequest`, checked
 by `ExternalH3GenerationBackend.plan()`, and launched through the audited
 maybleMyers/h3 entrypoint.
 
+The interface provides readable operational typography and persistent Dark /
+Clear display modes. The selected theme is stored only in the local browser.
+
 ## Runtime layout
 
 ```text
