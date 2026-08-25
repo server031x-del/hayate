@@ -140,6 +140,8 @@ tiling. Remove `--dry-run` only after preflight reports `READY`.
   VAE decode, and output encode ordering.
 - Stage timing and JSON benchmark reports.
 - A non-importing adapter for the pinned upstream MiniMax-H3 engine contract.
+- Prompt-cache fingerprints covering the upstream commit, text-encoder file,
+  and image/reference contents, with crash-safe atomic cache replacement.
 
 ## Current execution support
 

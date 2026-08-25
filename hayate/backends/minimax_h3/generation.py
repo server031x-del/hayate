@@ -69,6 +69,11 @@ class GenerationPlan:
                 "seed": self.request.seed,
                 "blocks_to_swap": self.request.blocks_to_swap,
                 "activation_chunk_rows": self.request.activation_chunk_rows,
+                "prompt_cache": (
+                    str(self.request.prompt_cache.resolve(strict=False))
+                    if self.request.prompt_cache is not None
+                    else None
+                ),
             },
         }
 

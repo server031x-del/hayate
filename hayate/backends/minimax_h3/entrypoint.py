@@ -8,6 +8,7 @@ from pathlib import Path
 
 from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter
 from hayate.backends.minimax_h3.nvfp4_conditioner import install_nvfp4_conditioner_override
+from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_override
 from hayate.backends.minimax_h3.w4a8_upstream import install_w4a8_override
 
 
@@ -17,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("upstream_args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     adapter = H3UpstreamAdapter(args.upstream)
-    adapter.require_valid(require_audited_commit=True)
+    validation = adapter.require_valid(require_audited_commit=True)
     engine_dir = adapter.checkout / "minimax_engine"
     for path in (adapter.checkout, engine_dir):
         if str(path) not in sys.path:
@@ -28,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(f"cannot import upstream generation CLI: {script}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    install_prompt_cache_override(module, upstream_commit=validation.commit or validation.audited_commit)
     install_w4a8_override(module)
     install_nvfp4_conditioner_override()
     forwarded = args.upstream_args
