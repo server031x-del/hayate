@@ -1,0 +1,10 @@
+{
+  "name": "maybleMyers/h3",
+  "repository": "https://github.com/maybleMyers/h3",
+  "commit": "94220c1fdf14d6d9d40be06fb99f55b27c0d9024",
+  "audited_at": "2026-08-25",
+  "engine_root": "minimax_engine",
+  "integration": "external-checkout-adapter",
+  "license_note": "No repository-level license at audited commit; see docs/UPSTREAM_LICENSE_AUDIT.md"
+}
+

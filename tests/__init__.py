@@ -1,0 +1,2 @@
+"""HAYATE tests."""
+

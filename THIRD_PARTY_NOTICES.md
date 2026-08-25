@@ -1,0 +1,25 @@
+# Third-party notices
+
+HAYATE is designed around the MiniMax-H3 engine architecture in
+[`maybleMyers/h3`](https://github.com/maybleMyers/h3), audited at commit
+`94220c1fdf14d6d9d40be06fb99f55b27c0d9024`.
+
+No source code from that repository is redistributed in HAYATE v0.1. The exact
+component classification and licensing review are in:
+
+- `docs/UPSTREAM_COMPONENT_CLASSIFICATION.md`
+- `docs/UPSTREAM_LICENSE_AUDIT.md`
+
+Several upstream model-definition files state Apache-2.0 provenance from the
+MiniMax and Hugging Face teams. If those files are vendored in a later release,
+their copyright/license headers and a modification notice must be preserved.
+
+HAYATE's W4A8 format research references
+[`starsFriday/ComfyUI-W4A8-Loader`](https://github.com/starsFriday/ComfyUI-W4A8-Loader)
+and uses `Comfy-Org/comfy-kitchen` 0.2.31 directly as an optional dependency.
+`comfy-kitchen` is licensed under Apache-2.0; HAYATE does not copy or modify its
+sources. The inspected starsFriday loader repository has no top-level license,
+so its code is not copied without a license grant.
+
+MiniMax-H3 model weights are separately licensed by MiniMax. HAYATE does not
+ship model weights and does not change their license terms.

@@ -1,0 +1,2 @@
+"""HAYATE command-line interface."""
+
