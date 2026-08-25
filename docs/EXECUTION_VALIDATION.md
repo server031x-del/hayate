@@ -110,6 +110,35 @@ coastal highway, and city sequence. Framewise SSIM against the conservative
 cached run was `0.863170`; this is a speed/quality comparison between two cached
 runs, not an uncached-fidelity score.
 
+### SageAttention and Video VAE tile experiments
+
+The fast run was repeated with only the attention backend changed from SDPA to
+SageAttention 2.2.0. The released 256-pixel Video VAE tile geometry, prompt,
+seed, scheduler points, models, and EasyCache settings were unchanged. Both
+runs made 10 full Transformer calls and skipped 9:
+
+| Attention | Denoise | Total | Peak CUDA allocation / reservation |
+|---|---:|---:|---:|
+| SDPA | 8m 47s | 724.14 s | 5.54 / 7.48 GiB |
+| SageAttention 2.2 | 5m 09s | 418.63 s | 5.54 / 7.48 GiB |
+
+SageAttention reduced total wall time by 305.50 seconds (42.2%) without raising
+the recorded CUDA peaks. All 243 frames and both 10.125-second streams were
+present, with no detected black/freeze interval or NaN/Inf audio samples. The
+comparison contact sheet retained the same car identity, coastal-to-city
+sequence, composition, and detail. Framewise SSIM against SDPA was `0.697647`;
+because approximate attention changes the denoising trajectory and object
+position, this is recorded as a difference score rather than a fidelity pass.
+SDPA remains the reference profile.
+
+Separately, decoding the same 512x512x243 latent shape with Video VAE tiles of
+256, 320, and 512 pixels took 129.43, 86.94, and 57.65 seconds. Tile 512 reduced
+the full generation to 662.6 seconds, but its video had obvious repeated-edge
+ghosting (`SSIM 0.727807`, minimum `0.437561`). FFmpeg-decoded audio had the
+same MD5 (`9d04b01e934eb421a71a19736174520e`) in both runs. It was
+rejected. Tile 320 remains experimental until a fixed-latent visual A/B passes;
+the default and both validated speed profiles retain tile 256.
+
 ## Windows non-mmap checkpoint loading
 
 An intermittent Windows native access violation was observed in

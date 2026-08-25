@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter, UpstreamValidation
+from hayate.backends.minimax_h3.vae_tiling import validate_vae_tile_size
 from hayate.errors import GenerationPreflightError
 from hayate.loaders.base import LoaderStatus
 from hayate.loaders.factory import LoaderFactory
@@ -39,6 +40,8 @@ class GenerationRequest:
     easycache_start: float = 0.15
     easycache_end: float = 0.95
     easycache_max_consecutive_skips: int = 2
+    vae_tile_size: int = 256
+    attention_backend: str = "sdpa"
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,8 @@ class GenerationPlan:
                 "easycache_start": self.request.easycache_start,
                 "easycache_end": self.request.easycache_end,
                 "easycache_max_consecutive_skips": self.request.easycache_max_consecutive_skips,
+                "vae_tile_size": self.request.vae_tile_size,
+                "attention_backend": self.request.attention_backend,
             },
         }
 
@@ -139,6 +144,22 @@ class ExternalH3GenerationBackend:
             )
         }
 
+    def _probe_python_module(self, module: str, timeout: float = 30.0) -> tuple[bool, str]:
+        try:
+            result = self._runner(
+                [str(self.python), "-c", f"import {module}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+        if result.returncode:
+            detail = result.stderr.strip().splitlines()
+            return False, detail[-1] if detail else f"exit code {result.returncode}"
+        return True, "available"
+
     @staticmethod
     def _validate_request(request: GenerationRequest) -> list[str]:
         issues: list[str] = []
@@ -170,6 +191,12 @@ class ExternalH3GenerationBackend:
             issues.append("easycache range must satisfy 0 <= start < end <= 1")
         if request.easycache_max_consecutive_skips < 1:
             issues.append("easycache_max_consecutive_skips must be at least one")
+        try:
+            validate_vae_tile_size(request.vae_tile_size, label="vae_tile_size")
+        except ValueError as exc:
+            issues.append(str(exc))
+        if request.attention_backend not in {"sdpa", "sageattn"}:
+            issues.append(f"unsupported attention backend: {request.attention_backend}")
         for label, path in (
             ("first image", request.image_path),
             ("last image", request.last_image_path),
@@ -187,6 +214,10 @@ class ExternalH3GenerationBackend:
         warnings: list[str] = []
         if not self.python.is_file():
             issues.append(f"Python interpreter does not exist: {self.python}")
+        elif request.attention_backend == "sageattn":
+            available, reason = self._probe_python_module("sageattention")
+            if not available:
+                issues.append(f"SageAttention is unavailable in {self.python}: {reason}")
         checkpoint_dir = request.checkpoint_dir.expanduser().resolve(strict=False)
         if not checkpoint_dir.is_dir():
             issues.append(f"checkpoint directory does not exist: {checkpoint_dir}")
@@ -225,6 +256,8 @@ class ExternalH3GenerationBackend:
             warnings.append("the initial W4A8 target is FL2VA; ref2va needs its matching transformer layout")
         if request.easycache:
             warnings.append("EasyCache trades a small amount of numerical fidelity for generation speed")
+        if request.attention_backend == "sageattn":
+            warnings.append("SageAttention is approximate; compare quality against SDPA")
 
         command = [
             str(self.python),
@@ -248,7 +281,7 @@ class ExternalH3GenerationBackend:
             "--device",
             "cuda:0",
             "--attn_mode",
-            "sdpa",
+            request.attention_backend,
             "--blocks_to_swap",
             str(request.blocks_to_swap),
             "--act_chunk_rows",
@@ -287,6 +320,7 @@ class ExternalH3GenerationBackend:
         environment = (
             {} if os.name == "nt" else {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
         )
+        environment["HAYATE_VAE_TILE_SIZE"] = str(request.vae_tile_size)
         if request.easycache:
             environment.update(
                 {

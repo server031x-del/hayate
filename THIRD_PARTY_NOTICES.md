@@ -28,3 +28,11 @@ HAYATE's runtime-adaptive transformer cache is an independent MiniMax-H3
 integration based on the algorithm published by
 [`H-EmbodVis/EasyCache`](https://github.com/H-EmbodVis/EasyCache), licensed
 under Apache-2.0. HAYATE does not copy ComfyUI's GPL EasyCache integration.
+
+The optional Windows SageAttention profile uses
+[`woct0rdho/SageAttention`](https://github.com/woct0rdho/SageAttention) 2.2.0
+post4, derived from [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention),
+under Apache-2.0. Its optional Triton runtime is
+[`woct0rdho/triton-windows`](https://github.com/woct0rdho/triton-windows),
+distributed under the MIT license. HAYATE calls these installed packages and
+does not copy their sources.

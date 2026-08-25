@@ -31,6 +31,8 @@ def test_rtx3060_fast_profile_resolves_validated_generation_settings(monkeypatch
             str(tmp_path / "checkpoint"),
             "--output",
             str(tmp_path / "out.mp4"),
+            "--attention-backend",
+            "sageattn",
             "--rtx3060-fast",
             "--dry-run",
         ]
@@ -46,6 +48,8 @@ def test_rtx3060_fast_profile_resolves_validated_generation_settings(monkeypatch
         assert args.easycache_max_consecutive_skips == 2
         assert args.blocks_to_swap == 49
         assert args.activation_chunk_rows == 32768
+        assert args.attention_backend == "sdpa"
+        assert args.vae_tile_size == 256
         raise StopAfterProfile
 
     monkeypatch.setattr("hayate.cli.main.ExternalH3GenerationBackend", stop_backend)
@@ -55,3 +59,39 @@ def test_rtx3060_fast_profile_resolves_validated_generation_settings(monkeypatch
         pass
     else:
         raise AssertionError("profile was not applied before backend construction")
+
+
+def test_rtx3060_fast_sage_profile_selects_sageattention(monkeypatch, tmp_path):
+    args = build_parser().parse_args(
+        [
+            "generate",
+            "--prompt",
+            "test",
+            "--ckpt-dir",
+            str(tmp_path / "checkpoint"),
+            "--output",
+            str(tmp_path / "out.mp4"),
+            "--vae-tile-size",
+            "512",
+            "--rtx3060-fast-sage",
+            "--dry-run",
+        ]
+    )
+
+    class StopAfterProfile(RuntimeError):
+        pass
+
+    def stop_backend(*_args, **_kwargs):
+        assert args.steps == 20
+        assert args.easycache is True
+        assert args.attention_backend == "sageattn"
+        assert args.vae_tile_size == 256
+        raise StopAfterProfile
+
+    monkeypatch.setattr("hayate.cli.main.ExternalH3GenerationBackend", stop_backend)
+    try:
+        run_generate(args, None)
+    except StopAfterProfile:
+        pass
+    else:
+        raise AssertionError("SageAttention profile was not applied")

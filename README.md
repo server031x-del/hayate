@@ -147,6 +147,28 @@ threshold to `0.4`, but forces a real Transformer evaluation after at most two
 cached calls. EasyCache is opt-in because skipped Transformer evaluations trade
 a small amount of numerical fidelity for speed.
 
+On the reference Windows RTX 3060, the validated approximate-attention profile
+cut the same fixed-seed 512x512, 243-frame run from 12m04s to 6m59s while
+retaining the safe 256-pixel VAE tiling geometry:
+
+```powershell
+uv run --no-sync hayate generate `
+  --upstream M:/path/to/maybleMyers-h3 `
+  --ckpt-dir M:/path/to/MiniMax-H3-snapshot `
+  --config configs/models.local.yaml `
+  --prompt "A cinematic scene" `
+  --output outputs/hayate-fast-sage.mp4 `
+  --rtx3060-fast-sage
+```
+
+This profile requires a Windows-compatible SageAttention 2.2 build and is
+deliberately separate from `--rtx3060-fast`: SageAttention quantizes attention
+internals and is therefore not numerically identical to SDPA. Use SDPA for the
+fidelity reference. VAE tile sizes above the released 256-pixel geometry remain
+experimental; a 512-pixel tile was faster but failed the fixed-seed visual gate.
+`--no-sync` preserves the separately installed platform-specific wheel; see
+[`docs/SAGEATTENTION_WINDOWS.md`](docs/SAGEATTENTION_WINDOWS.md).
+
 `--verbose` prints every tensor name, shape, dtype, and physical storage size.
 `--json` emits a machine-readable report. Benchmark JSON is saved under
 `benchmarks/` unless `--no-save-benchmark` is used.

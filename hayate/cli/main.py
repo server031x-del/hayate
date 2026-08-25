@@ -93,11 +93,32 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--easycache-end", type=float, default=0.95)
     generate_parser.add_argument("--easycache-max-consecutive-skips", type=int, default=2)
     generate_parser.add_argument(
+        "--vae-tile-size",
+        type=int,
+        default=256,
+        help="video VAE tile size in pixels; values above the validated 256 are experimental",
+    )
+    generate_parser.add_argument(
+        "--attention-backend",
+        choices=("sdpa", "sageattn"),
+        default="sdpa",
+        help="transformer attention backend; sageattn requires a compatible SageAttention build",
+    )
+    speed_profiles = generate_parser.add_mutually_exclusive_group()
+    speed_profiles.add_argument(
         "--rtx3060-fast",
         action="store_true",
         help=(
             "apply the validated RTX 3060 fast profile: 20 points, EasyCache 0.4, "
             "two consecutive skips, 49 swapped blocks, and 32768-row chunks"
+        ),
+    )
+    speed_profiles.add_argument(
+        "--rtx3060-fast-sage",
+        action="store_true",
+        help=(
+            "apply the validated RTX 3060 fast profile with SageAttention 2.2; "
+            "this is faster but approximate and requires a compatible package"
         ),
     )
     generate_parser.add_argument("--dry-run", action="store_true")
@@ -116,6 +137,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     load_parser.add_argument("--output", type=Path, default=None)
     load_parser.add_argument("--decode-smoke", action="store_true")
+    load_parser.add_argument("--decode-latent-frames", type=int, default=2)
+    load_parser.add_argument("--decode-latent-height", type=int, default=8)
+    load_parser.add_argument("--decode-latent-width", type=int, default=8)
+    load_parser.add_argument("--vae-tile-size", type=int, default=256)
+    load_parser.add_argument("--vae-no-tiling", action="store_true")
+    load_parser.add_argument("--cudnn-benchmark", action="store_true")
     return parser
 
 
@@ -295,7 +322,7 @@ def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
 
 
 def run_generate(args: argparse.Namespace, console: Console) -> int:
-    if args.rtx3060_fast:
+    if args.rtx3060_fast or args.rtx3060_fast_sage:
         args.steps = 20
         args.easycache = True
         args.easycache_threshold = 0.4
@@ -304,6 +331,11 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         args.easycache_max_consecutive_skips = 2
         args.blocks_to_swap = 49
         args.activation_chunk_rows = 32768
+        args.vae_tile_size = 256
+    if args.rtx3060_fast:
+        args.attention_backend = "sdpa"
+    elif args.rtx3060_fast_sage:
+        args.attention_backend = "sageattn"
     config_path = (args.config or _default_config()).resolve(strict=False)
     backend = ExternalH3GenerationBackend(
         args.upstream,
@@ -331,6 +363,8 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         easycache_start=args.easycache_start,
         easycache_end=args.easycache_end,
         easycache_max_consecutive_skips=args.easycache_max_consecutive_skips,
+        vae_tile_size=args.vae_tile_size,
+        attention_backend=args.attention_backend,
     )
     plan = backend.plan(request)
     payload = plan.to_dict()
@@ -372,6 +406,22 @@ def run_load_check(args: argparse.Namespace, console: Console) -> int:
         command.extend(("--output", str(args.output)))
     if args.decode_smoke:
         command.append("--decode-smoke")
+        command.extend(
+            (
+                "--decode-latent-frames",
+                str(args.decode_latent_frames),
+                "--decode-latent-height",
+                str(args.decode_latent_height),
+                "--decode-latent-width",
+                str(args.decode_latent_width),
+                "--vae-tile-size",
+                str(args.vae_tile_size),
+            )
+        )
+        if args.vae_no_tiling:
+            command.append("--vae-no-tiling")
+        if args.cudnn_benchmark:
+            command.append("--cudnn-benchmark")
     return subprocess.run(command, check=False).returncode
 
 

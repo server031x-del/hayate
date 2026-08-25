@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from hayate.backends.minimax_h3.generation import ExternalH3GenerationBackend, GenerationRequest
@@ -71,3 +72,39 @@ def test_generation_plan_maps_four_single_file_overrides_and_memory_flags(tmp_pa
     assert plan.environment["HAYATE_EASYCACHE"] == "1"
     assert plan.environment["HAYATE_EASYCACHE_THRESHOLD"] == "0.2"
     assert plan.environment["HAYATE_EASYCACHE_MAX_CONSECUTIVE_SKIPS"] == "2"
+    assert plan.environment["HAYATE_VAE_TILE_SIZE"] == "256"
+
+
+def test_generation_request_rejects_unknown_attention_backend(tmp_path):
+    issues = ExternalH3GenerationBackend._validate_request(
+        GenerationRequest(
+            "test",
+            tmp_path / "checkpoint",
+            tmp_path / "out.mp4",
+            attention_backend="unknown",
+        )
+    )
+    assert "unsupported attention backend: unknown" in issues
+
+
+def test_generation_request_rejects_non_progressing_vae_tile_geometry(tmp_path):
+    issues = ExternalH3GenerationBackend._validate_request(
+        GenerationRequest(
+            "test",
+            tmp_path / "checkpoint",
+            tmp_path / "out.mp4",
+            vae_tile_size=64,
+        )
+    )
+    assert "vae_tile_size must be a multiple of 16 greater than 64" in issues
+
+
+def test_optional_python_module_probe_reports_import_failure(tmp_path):
+    backend = object.__new__(ExternalH3GenerationBackend)
+    backend.python = tmp_path / "python.exe"
+    backend._runner = lambda *_args, **_kwargs: subprocess.CompletedProcess(
+        [], 1, "", "ModuleNotFoundError: no module named sageattention"
+    )
+    available, reason = backend._probe_python_module("sageattention")
+    assert available is False
+    assert reason == "ModuleNotFoundError: no module named sageattention"
