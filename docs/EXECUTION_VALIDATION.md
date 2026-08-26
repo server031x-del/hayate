@@ -139,6 +139,28 @@ same MD5 (`9d04b01e934eb421a71a19736174520e`) in both runs. It was
 rejected. Tile 320 remains experimental until a fixed-latent visual A/B passes;
 the default and both validated speed profiles retain tile 256.
 
+### Fast Sage Detail quality/speed search
+
+A second fixed-input search used the same uploaded I2V image, Japanese prompt,
+seed `20260825`, 512x512 resolution, 124 frames, 20 scheduler points, and the
+same four checkpoints. The existing Fast Sage profile was deliberately left
+unchanged.
+
+An aggressive cache candidate (`0.3`, active 25%-90%, maximum one skip) raised
+full DiT calls from 10 to 14 and produced a cleaner contact sheet, but took
+282.65 seconds with the validated 256-pixel VAE tile. It was rejected as a
+shipping speed profile. A 512-pixel VAE tile was also rejected after the output
+showed severe grid/block artifacts.
+
+The selected `fast_sage_detail` profile changes only the EasyCache end point
+from 95% to 85%. It made 11 full DiT calls and 8 skips. With VAE attention
+explicitly kept on SDPA, the validation run completed in 240.52 seconds, peaked
+at 5.95 GiB CUDA reservation, and produced a normal 512x512 video. The same
+output compared with the pre-scoping Sage-VAE decode at `SSIM 0.9861`; this is
+a regression/difference check, not a perceptual quality score. The one-extra-
+evaluation design keeps the expected cost near 5%-10% over a warm `最速` run,
+while retaining late-stage detail calculation.
+
 ## Windows non-mmap checkpoint loading
 
 An intermittent Windows native access violation was observed in

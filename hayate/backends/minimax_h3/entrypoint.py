@@ -11,7 +11,10 @@ from hayate.backends.minimax_h3.events import emit_event, install_structured_eve
 from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter
 from hayate.backends.minimax_h3.nvfp4_conditioner import install_nvfp4_conditioner_override
 from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_override
-from hayate.backends.minimax_h3.vae_tiling import install_vae_tiling_override
+from hayate.backends.minimax_h3.vae_tiling import (
+    install_vae_attention_override,
+    install_vae_tiling_override,
+)
 from hayate.backends.minimax_h3.w4a8_upstream import install_w4a8_override
 
 
@@ -65,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     install_w4a8_override(module)
     install_nvfp4_conditioner_override()
     install_vae_tiling_override()
+    install_vae_attention_override("sdpa")
     forwarded = args.upstream_args
     if forwarded and forwarded[0] == "--":
         forwarded = forwarded[1:]

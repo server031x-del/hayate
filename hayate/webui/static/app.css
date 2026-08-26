@@ -84,7 +84,10 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .resource-row { display: flex; justify-content: space-between; align-items: center; color: var(--quiet); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; margin-top: 8px; }
 .resource-row strong { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
 .meter { height: 3px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; margin-top: 5px; }
-.meter i { width: 0; height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, var(--cyan), var(--blue)); transition: width .5s ease; }
+.meter progress, .progress-track progress, .mini-progress progress { width: 100%; height: 100%; display: block; border: 0; appearance: none; background: transparent; }
+.meter progress::-webkit-progress-bar, .progress-track progress::-webkit-progress-bar, .mini-progress progress::-webkit-progress-bar { background: transparent; }
+.meter progress::-webkit-progress-value, .progress-track progress::-webkit-progress-value, .mini-progress progress::-webkit-progress-value { border-radius: inherit; background: linear-gradient(90deg, var(--cyan), var(--blue)); }
+.meter progress::-moz-progress-bar, .progress-track progress::-moz-progress-bar, .mini-progress progress::-moz-progress-bar { border-radius: inherit; background: linear-gradient(90deg, var(--cyan), var(--blue)); }
 .version { text-align: center; color: var(--quiet); font-size: 8px; letter-spacing: .1em; }
 
 .main-area { margin-left: var(--sidebar); min-height: 100vh; padding: 0 34px 50px; }
@@ -121,13 +124,14 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .section-heading.compact { margin-top: 2px; }
 .divider { height: 1px; background: var(--line); margin: 25px 0; }
 
-.profile-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.profile-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
 .profile-card { position: relative; min-height: 82px; border: 1px solid var(--line); border-radius: 13px; padding: 13px 11px; background: rgba(255,255,255,.018); display: grid; grid-template-columns: 30px 1fr; align-items: center; gap: 9px; cursor: pointer; transition: .2s ease; overflow: hidden; }
 .profile-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .profile-card.selected { border-color: rgba(84,230,255,.42); background: linear-gradient(145deg, rgba(84,230,255,.08), rgba(95,131,255,.04)); box-shadow: inset 0 0 24px rgba(84,230,255,.025); }
 .profile-card input { position: absolute; opacity: 0; pointer-events: none; }
 .profile-icon { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 10px; font-weight: 800; }
 .profile-icon.speed { background: rgba(84,230,255,.12); color: var(--cyan); }
+.profile-icon.detail { background: rgba(73,220,157,.13); color: #62e6ad; }
 .profile-icon.balance { background: rgba(95,131,255,.13); color: #87a2ff; }
 .profile-icon.quality { background: rgba(164,122,255,.12); color: #ba9bff; }
 .profile-icon.custom { background: rgba(255,255,255,.06); color: var(--muted); }
@@ -143,6 +147,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .text-button { border: 0; background: transparent; color: var(--quiet); font-size: 9px; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
 .text-button:hover { color: var(--cyan); background: rgba(84,230,255,.06); }
 .text-button:last-child { margin-left: auto; }
+.prompt-assist-button { color: var(--cyan); font-weight: 700; }
 .input-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; }
 .field-label { display: flex; align-items: baseline; justify-content: space-between; font-size: 10px; font-weight: 700; margin-bottom: 9px; }
 .field-label span { color: var(--quiet); font-size: 8px; font-weight: 500; }
@@ -279,7 +284,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .job-main b { display: block; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-main small { display: block; color: var(--quiet); font-size: 8px; margin-top: 5px; }
 .mini-progress { height: 3px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; margin-top: 7px; }
-.mini-progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--blue)); }
 .job-stat span { display: block; color: var(--quiet); font-size: 7px; }
 .job-stat b { display: block; font-size: 9px; margin-top: 5px; font-variant-numeric: tabular-nums; }
 .job-action { border: 1px solid var(--line); background: transparent; border-radius: 8px; height: 30px; color: var(--muted); font-size: 8px; cursor: pointer; }
@@ -341,6 +345,22 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .dialog-stats div { padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; text-align: center; }
 .dialog-stats small { display: block; color: var(--quiet); font-size: 7px; }
 .dialog-stats b { display: block; font-size: 10px; margin-top: 5px; }
+.prompt-dialog { width: min(980px, calc(100vw - 38px)); max-height: calc(100vh - 38px); padding: 0; border: 1px solid var(--line-strong); border-radius: 19px; background: #090e16; color: var(--text); box-shadow: 0 30px 100px rgba(0,0,0,.7); }
+.prompt-dialog::backdrop { background: rgba(2,5,9,.82); backdrop-filter: blur(10px); }
+.prompt-dialog-shell { padding: 23px; }
+.prompt-dialog-head { position: relative; display: flex; justify-content: space-between; align-items: start; }
+.prompt-dialog-head span { color: var(--cyan); font-size: 10px; letter-spacing: .15em; }
+.prompt-dialog-head h2 { margin: 6px 0 0; font-size: 19px; }
+.prompt-dialog-close { position: static; flex: 0 0 auto; }
+.prompt-dialog-warning { margin: 17px 0; padding: 11px 13px; border: 1px solid rgba(255,190,92,.2); border-radius: 10px; background: rgba(255,190,92,.06); color: var(--muted); font-size: 13px; line-height: 1.55; }
+.prompt-assist-grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 16px; }
+.prompt-assist-fields { display: grid; gap: 11px; }
+.prompt-assist-fields label, .prompt-draft { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.prompt-assist-fields textarea, .prompt-draft textarea { width: 100%; min-height: 82px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 11px; background: var(--surface-2); color: var(--text); font-weight: 500; line-height: 1.55; }
+.prompt-assist-fields label:first-child textarea { min-height: 116px; }
+.prompt-draft textarea { min-height: 100%; resize: none; }
+.prompt-dialog-note { display: block; margin-top: 13px; color: var(--quiet); font-size: 11px; line-height: 1.55; }
+.prompt-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
 .toast-stack { position: fixed; right: 20px; bottom: 20px; z-index: 100; display: grid; gap: 8px; }
 .toast { max-width: 370px; padding: 13px 15px; border-radius: 11px; border: 1px solid var(--line-strong); background: rgba(17,24,35,.96); box-shadow: var(--shadow); font-size: 9px; line-height: 1.5; animation: toastIn .3s ease; }
 .toast.error { border-color: rgba(255,113,136,.3); color: #ff9baa; }
@@ -426,6 +446,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 :root[data-theme="clear"] .tip-card { background: rgba(255,255,255,.58); }
 :root[data-theme="clear"] .library-card { background: rgba(255,255,255,.82); }
 :root[data-theme="clear"] .video-dialog { background: var(--surface-solid); box-shadow: 0 30px 100px rgba(31,51,73,.32); }
+:root[data-theme="clear"] .prompt-dialog { background: var(--surface-solid); box-shadow: 0 30px 100px rgba(31,51,73,.32); }
 :root[data-theme="clear"] .toast { background: rgba(255,255,255,.97); }
 :root[data-theme="clear"] .nav-item:hover { background: rgba(53,109,232,.06); }
 :root[data-theme="clear"] .nav-item.active { background: linear-gradient(90deg, rgba(0,140,169,.12), rgba(53,109,232,.05)); }
@@ -487,6 +508,8 @@ select:focus-visible, summary:focus-visible, a:focus-visible {
   .job-row { grid-template-columns: 38px 1fr 65px; }
   .job-stat:nth-of-type(2), .job-row .job-action { display: none; }
   .dialog-info { grid-template-columns: 1fr; }
+  .prompt-assist-grid { grid-template-columns: 1fr; }
+  .prompt-draft textarea { min-height: 220px; }
   input, select, textarea { font-size: 16px !important; }
   .text-button, .secondary-button, .job-action, .stop-save-button,
   .danger-button, .theme-button, .icon-button { min-height: 40px; }

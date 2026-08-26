@@ -55,3 +55,49 @@ def install_vae_tiling_override(tile_size: int | None = None) -> bool:
     load_vae_with_hayate_tiling._hayate_vae_tile_size = tile_size  # type: ignore[attr-defined]
     model_loader.load_vae = load_vae_with_hayate_tiling
     return True
+
+
+def install_vae_attention_override(backend: str = "sdpa") -> bool:
+    """Keep the quantized attention backend scoped to the DiT.
+
+    Upstream's module-level attention default is shared by the transformer and
+    both VAEs.  SageAttention is valuable in the expensive denoiser, while the
+    much smaller decode stages are precision-sensitive and do not need that
+    approximation.  Per-model processor overrides preserve the upstream
+    pipeline and leave the DiT backend unchanged.
+    """
+
+    from minimax_video import model_loader
+
+    current_video: Callable[..., Any] = model_loader.load_vae
+    current_audio: Callable[..., Any] = model_loader.load_audio_vae
+    for current in (current_video, current_audio):
+        if getattr(current, "_hayate_vae_attention_override", False):
+            installed = getattr(current, "_hayate_vae_attention_backend", None)
+            if installed != backend:
+                raise RuntimeError(
+                    f"VAE attention override is already installed for {installed}, not {backend}"
+                )
+    if all(
+        getattr(current, "_hayate_vae_attention_override", False)
+        for current in (current_video, current_audio)
+    ):
+        return False
+
+    def scoped(loader: Callable[..., Any], component: str):
+        def load_with_scoped_attention(*args, **kwargs):
+            vae = loader(*args, **kwargs)
+            vae.set_attention_backend(backend)
+            print(
+                f"HAYATE_VAE_ATTENTION component={component} backend={backend}",
+                flush=True,
+            )
+            return vae
+
+        load_with_scoped_attention._hayate_vae_attention_override = True  # type: ignore[attr-defined]
+        load_with_scoped_attention._hayate_vae_attention_backend = backend  # type: ignore[attr-defined]
+        return load_with_scoped_attention
+
+    model_loader.load_vae = scoped(current_video, "video")
+    model_loader.load_audio_vae = scoped(current_audio, "audio")
+    return True

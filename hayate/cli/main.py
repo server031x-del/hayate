@@ -123,6 +123,14 @@ def build_parser() -> argparse.ArgumentParser:
             "this is faster but approximate and requires a compatible package"
         ),
     )
+    speed_profiles.add_argument(
+        "--rtx3060-fast-sage-detail",
+        action="store_true",
+        help=(
+            "apply the RTX 3060 SageAttention detail profile: keep 20 points and "
+            "EasyCache 0.4 while protecting the final 15 percent of denoising"
+        ),
+    )
     generate_parser.add_argument("--dry-run", action="store_true")
     generate_parser.add_argument("--json", action="store_true", dest="as_json")
 
@@ -344,7 +352,13 @@ def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
 
 def run_generate(args: argparse.Namespace, console: Console) -> int:
     selected_profile = (
-        "fast" if args.rtx3060_fast else "fast_sage" if args.rtx3060_fast_sage else None
+        "fast"
+        if args.rtx3060_fast
+        else "fast_sage"
+        if args.rtx3060_fast_sage
+        else "fast_sage_detail"
+        if args.rtx3060_fast_sage_detail
+        else None
     )
     if selected_profile is not None:
         profile = get_generation_profile(selected_profile)

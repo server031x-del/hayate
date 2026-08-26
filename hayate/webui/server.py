@@ -30,7 +30,7 @@ from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
 from hayate.webui.settings import SettingsStore, WebUISettings
 
-PROFILE_NAMES = ("quality", "fast", "fast_sage", "custom")
+PROFILE_NAMES = ("quality", "fast", "fast_sage", "fast_sage_detail", "custom")
 ASSET_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 IMAGE_SIGNATURES = {
@@ -52,7 +52,12 @@ class SettingsPayload(BaseModel):
 
 class GenerationPayload(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
-    profile: Literal["quality", "fast", "fast_sage", "custom"] = "fast_sage"
+    original_prompt: str | None = Field(default=None, max_length=12000)
+    prompt_transform_applied: bool = False
+    prompt_transform_template_version: str | None = Field(default=None, max_length=64)
+    profile: Literal[
+        "quality", "fast", "fast_sage", "fast_sage_detail", "custom"
+    ] = "fast_sage"
     task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
     width: int = Field(default=512, ge=256, le=1536)
     height: int = Field(default=512, ge=256, le=1536)
@@ -284,6 +289,15 @@ def create_app(
             candidate = root / candidate
         return candidate.resolve(strict=False)
 
+    def with_media_availability(job: dict) -> dict:
+        enriched = dict(job)
+        raw_path = enriched.get("output_path") or ""
+        path = persisted_artifact_path(raw_path) if raw_path else None
+        enriched["media_available"] = bool(
+            path is not None and path.suffix.lower() == ".mp4" and path.is_file()
+        )
+        return enriched
+
     @app.get("/")
     async def index():
         return FileResponse(
@@ -299,7 +313,7 @@ def create_app(
             "settings": current.to_dict(),
             "readiness": SettingsStore.readiness(current),
             "hardware": hardware,
-            "jobs": store.list(100),
+            "jobs": [with_media_availability(job) for job in store.list(100)],
             "profiles": {
                 name: get_generation_profile(name).to_dict()
                 for name in PROFILE_NAMES
@@ -487,6 +501,8 @@ def create_app(
             frames=frames,
             seed=seed,
             output=str(output.resolve(strict=False)),
+            original_prompt=payload.original_prompt or payload.prompt,
+            effective_prompt=payload.prompt,
             effective_profile=profile,
             warnings=list(plan.warnings),
         )
@@ -494,14 +510,16 @@ def create_app(
 
     @app.get("/api/jobs")
     async def list_jobs(limit: int = 100):
-        return {"jobs": store.list(limit)}
+        return {
+            "jobs": [with_media_availability(job) for job in store.list(limit)]
+        }
 
     @app.get("/api/jobs/{job_id}")
     async def get_job(job_id: str):
         job = store.get(job_id)
         if job is None:
             raise HTTPException(404, "job not found")
-        return job
+        return with_media_availability(job)
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str):
@@ -530,6 +548,7 @@ def create_app(
                 job = store.get(job_id)
                 if job is None:
                     return
+                job = with_media_availability(job)
                 encoded = json.dumps(job, ensure_ascii=False, separators=(",", ":"))
                 if encoded != previous:
                     yield f"data: {encoded}\n\n"

@@ -30,12 +30,37 @@ def test_h3_duration_snaps_to_supported_frame_geometry():
 def test_web_profiles_use_shared_validated_values():
     quality = _profile_values(GenerationPayload(prompt="test", profile="quality"))
     sage = _profile_values(GenerationPayload(prompt="test", profile="fast_sage"))
+    detail = _profile_values(
+        GenerationPayload(prompt="test", profile="fast_sage_detail")
+    )
     assert quality["steps"] == 50
     assert quality["attention_backend"] == "sdpa"
     assert quality["easycache"] is False
     assert sage["steps"] == 20
     assert sage["attention_backend"] == "sageattn"
     assert sage["vae_tile_size"] == 256
+    assert detail["steps"] == 20
+    assert detail["attention_backend"] == "sageattn"
+    assert detail["easycache_threshold"] == 0.4
+    assert detail["easycache_end"] == 0.85
+    assert detail["easycache_max_consecutive_skips"] == 2
+    assert detail["vae_tile_size"] == 256
+
+
+def test_prompt_transform_metadata_is_explicit_and_optional():
+    plain = GenerationPayload(prompt="plain")
+    assert plain.original_prompt is None
+    assert plain.prompt_transform_applied is False
+    assert plain.prompt_transform_template_version is None
+
+    transformed = GenerationPayload(
+        prompt="integrated_multimodal_description: [Shot 1] dance",
+        original_prompt="dance",
+        prompt_transform_applied=True,
+        prompt_transform_template_version="h3-base-fields-v1",
+    )
+    assert transformed.original_prompt == "dance"
+    assert transformed.prompt_transform_applied is True
 
 
 def test_structured_progress_event_is_primary_contract():
@@ -124,12 +149,20 @@ def test_persisted_history_remains_playable_after_output_directory_changes(tmp_p
     assert job is not None
     assert app.state.job_store.get_by_output(malformed_video) is not None
     with TestClient(app) as client:
+        assert client.get(f"/api/jobs/{job['id']}").json()["media_available"] is True
         response = client.get(f"/api/jobs/{job['id']}/media")
         assert response.status_code == 200
         assert response.content == b"older-video"
         log_response = client.get(f"/api/jobs/{job['id']}/log")
         assert log_response.status_code == 200
         assert log_response.json() == {"lines": [], "available": False}
+
+        video.unlink()
+        assert client.get(f"/api/jobs/{job['id']}").json()["media_available"] is False
+        listed = client.get("/api/jobs").json()["jobs"]
+        assert next(item for item in listed if item["id"] == job["id"])[
+            "media_available"
+        ] is False
 
 
 def _fake_plan(tmp_path: Path, output: Path) -> GenerationPlan:

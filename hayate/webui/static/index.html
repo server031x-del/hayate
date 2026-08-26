@@ -42,9 +42,9 @@
       <div class="machine-card" id="machineCard">
         <div class="machine-head"><span class="status-dot"></span><span id="gpuName">GPUを確認中</span></div>
         <div class="resource-row"><span>VRAM</span><strong id="vramText">—</strong></div>
-        <div class="meter"><i id="vramMeter"></i></div>
+        <div class="meter"><progress id="vramMeter" max="100" value="0"></progress></div>
         <div class="resource-row"><span>RAM</span><strong id="ramText">—</strong></div>
-        <div class="meter"><i id="ramMeter"></i></div>
+        <div class="meter"><progress id="ramMeter" max="100" value="0"></progress></div>
       </div>
       <div class="version">HAYATE <span id="version">—</span> · LOCAL</div>
     </aside>
@@ -79,7 +79,12 @@
               <label class="profile-card selected">
                 <input type="radio" name="profile" value="fast_sage" checked>
                 <span class="profile-icon speed">S</span>
-                <span><b>Fast Sage</b><small>10秒実測 6:59</small></span>
+                <span><b>最速</b><small>生成時間を最優先</small></span>
+              </label>
+              <label class="profile-card">
+                <input type="radio" name="profile" value="fast_sage_detail">
+                <span class="profile-icon detail">D</span>
+                <span><b>高速・画質優先</b><small>終盤の細部を追加計算</small></span>
                 <em>推奨</em>
               </label>
               <label class="profile-card">
@@ -107,6 +112,7 @@
             <div class="prompt-box">
               <textarea id="prompt" name="prompt" maxlength="12000" required aria-label="生成プロンプト" placeholder="映像の被写体、動き、カメラ、光、音を自由に描写してください…">A premium cinematic commercial for a sleek metallic silver sports car. The same car accelerates along a coastal highway at golden hour, dynamic tracking shots, close-ups of LED headlights and aerodynamic bodywork, then a final hero shot in a modern city plaza. Realistic motion, synchronized engine sound and cinematic music, no text, no logo, no watermark.</textarea>
               <div class="prompt-tools">
+                <button type="button" class="text-button prompt-assist-button" id="structurePrompt">H3向けプロンプト案</button>
                 <button type="button" class="text-button" data-prompt-chip="[Shot 1] ">＋ ショット</button>
                 <button type="button" class="text-button" data-prompt-chip="overall_soundscape: ">＋ 音響</button>
                 <button type="button" class="text-button" data-prompt-chip="non_diegetic_music: ">＋ 音楽</button>
@@ -198,7 +204,7 @@
               <div class="progress-state" id="progressState" hidden>
                 <div class="preview-stage" id="livePreview"><div class="scanline"></div><span id="previewLabel">GENERATING</span></div>
                 <div class="progress-meta"><div><p id="liveStage" aria-live="polite">起動準備</p><h3 id="liveDetail">エンジンを起動しています</h3></div><strong id="livePercent">0%</strong></div>
-                <div class="progress-track" id="liveProgressTrack" role="progressbar" aria-label="動画生成の進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="liveProgressBar"></i></div>
+                <div class="progress-track" id="liveProgressTrack" role="progressbar" aria-label="動画生成の進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><progress id="liveProgressBar" max="100" value="0"></progress></div>
                 <div class="time-grid"><div><span>経過時間</span><b id="elapsedTime">00:00</b></div><div><span>残り時間</span><b id="etaTime">計算中</b></div><div><span>プロファイル</span><b id="liveProfile">—</b></div></div>
                 <div class="stage-list" id="stageList">
                   <span data-threshold="8">入力</span><span data-threshold="22">VAE</span><span data-threshold="36">DiT</span><span data-threshold="94">生成</span><span data-threshold="98">保存</span>
@@ -209,7 +215,7 @@
                 </div>
               </div>
             </div>
-            <div class="tip-card"><span>QUALITY NOTE</span><p>SageAttentionは高速な近似計算です。完全な数値再現が必要な場合はFast SDPAを選択してください。</p></div>
+            <div class="tip-card"><span>QUALITY NOTE</span><p>高速化は近似計算を含みます。「高速・画質優先」は終盤を追加計算し、基準環境では「最速」より約5〜10%低速です。完全な数値再現が必要な場合はFast SDPAを選択してください。</p></div>
           </aside>
         </div>
       </section>
@@ -251,6 +257,28 @@
     <button class="dialog-close" id="closeDialog" aria-label="閉じる">×</button>
     <video id="dialogVideo" controls playsinline></video>
     <div class="dialog-info"><div><span id="dialogBadge"></span><h2 id="dialogTitle">Generated video</h2><p id="dialogPrompt"></p></div><div id="dialogStats" class="dialog-stats"></div></div>
+  </dialog>
+  <dialog id="promptDialog" class="prompt-dialog" aria-labelledby="promptDialogTitle">
+    <form method="dialog" class="prompt-dialog-shell">
+      <div class="prompt-dialog-head">
+        <div><span>H3 PROMPT ASSIST</span><h2 id="promptDialogTitle">H3向けプロンプト案を作成</h2></div>
+        <button value="cancel" class="dialog-close prompt-dialog-close" aria-label="閉じる">×</button>
+      </div>
+      <p class="prompt-dialog-warning">未指定の演出は追加しません。映像・音・音楽を入力し、実際にモデルへ渡す内容を確認してから適用してください。</p>
+      <div class="prompt-assist-grid">
+        <div class="prompt-assist-fields">
+          <label><span>映像・動作・カメラ</span><textarea id="promptVisual" required></textarea></label>
+          <label><span>環境音・同期音</span><textarea id="promptSound" required placeholder="例: 衣擦れ、足音、部屋の環境音。完全な無音なら N/A"></textarea></label>
+          <label><span>背景音楽</span><textarea id="promptMusic" required placeholder="楽器、テンポ、変化。BGMなしなら N/A"></textarea></label>
+        </div>
+        <label class="prompt-draft"><span>適用前プレビュー</span><textarea id="promptDraft" readonly></textarea></label>
+      </div>
+      <small class="prompt-dialog-note">公式推奨では3セクションを英語で記述し、台詞・歌詞・画面文字は原文を保持します。この補助機能は翻訳や内容の創作を行いません。</small>
+      <div class="prompt-dialog-actions">
+        <button value="cancel" class="secondary-button">キャンセル</button>
+        <button type="button" class="primary-button small" id="applyStructuredPrompt">この案を適用</button>
+      </div>
+    </form>
   </dialog>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <script src="/assets/app.js" defer></script>

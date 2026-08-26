@@ -42,6 +42,18 @@ GENERATION_PROFILES = {
         2,
         approximate=True,
     ),
+    "fast_sage_detail": GenerationProfile(
+        "fast_sage_detail",
+        "Fast Sage Detail",
+        20,
+        "sageattn",
+        True,
+        0.4,
+        0.15,
+        0.85,
+        2,
+        approximate=True,
+    ),
 }
 
 

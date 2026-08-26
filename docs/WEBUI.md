@@ -8,6 +8,19 @@ maybleMyers/h3 entrypoint.
 The interface provides readable operational typography and persistent Dark /
 Clear display modes. The selected theme is stored only in the local browser.
 
+The generation screen keeps the established `最速` profile unchanged and adds
+`高速・画質優先`. The latter preserves the same 20 scheduler points,
+SageAttention, 256-pixel VAE tile, and EasyCache threshold while ending cache
+reuse at 85% instead of 95%. This forces one additional late Transformer
+evaluation where small edges and textures are finalized. Video and audio VAE
+attention remain on SDPA; SageAttention is scoped to the denoising Transformer.
+
+The H3 prompt assistant is opt-in. It shows a complete preview built from three
+fields (visual/action/camera, sound, and music) and changes the generation prompt
+only after the operator presses **この案を適用**. The job record retains the
+original prompt, effective prompt, and template version when this transformation
+is used.
+
 ## Runtime layout
 
 ```text

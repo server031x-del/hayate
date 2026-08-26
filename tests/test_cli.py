@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from hayate.cli.main import build_parser, main, run_generate
 
 from .helpers import write_dummy_safetensors
@@ -95,3 +97,37 @@ def test_rtx3060_fast_sage_profile_selects_sageattention(monkeypatch, tmp_path):
         pass
     else:
         raise AssertionError("SageAttention profile was not applied")
+
+
+def test_rtx3060_fast_sage_detail_profile_protects_final_steps(monkeypatch, tmp_path):
+    args = build_parser().parse_args(
+        [
+            "generate",
+            "--prompt",
+            "test",
+            "--ckpt-dir",
+            str(tmp_path / "checkpoint"),
+            "--output",
+            str(tmp_path / "out.mp4"),
+            "--rtx3060-fast-sage-detail",
+            "--dry-run",
+        ]
+    )
+
+    class StopAfterProfile(RuntimeError):
+        pass
+
+    def stop_backend(*_args, **_kwargs):
+        assert args.steps == 20
+        assert args.attention_backend == "sageattn"
+        assert args.easycache is True
+        assert args.easycache_threshold == 0.4
+        assert args.easycache_start == 0.15
+        assert args.easycache_end == 0.85
+        assert args.easycache_max_consecutive_skips == 2
+        assert args.vae_tile_size == 256
+        raise StopAfterProfile
+
+    monkeypatch.setattr("hayate.cli.main.ExternalH3GenerationBackend", stop_backend)
+    with pytest.raises(StopAfterProfile):
+        run_generate(args, None)

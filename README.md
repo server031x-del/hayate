@@ -207,9 +207,14 @@ the Settings screen.
 
 Studio includes:
 
-- Fast Sage, Fast SDPA, Quality, and fully custom generation profiles;
+- unchanged Fast Sage (`最速`), a Fast Sage Detail (`高速・画質優先`)
+  profile with one extra late refinement, Fast SDPA, Quality, and fully custom
+  generation profiles;
 - T2V/I2V image upload, duration snapping to MiniMax H3 frame geometry, prompt
   cache, EasyCache, block swap, activation chunking, and VAE controls;
+- an explicit MiniMax H3 prompt assistant that previews and applies structured
+  visual/action/camera, sound, and music fields without silently rewriting the
+  user's prompt;
 - a single-GPU FIFO queue with a cross-process lease shared with the CLI;
 - structured `HAYATE_EVENT` progress, stage timeline, ETA, VRAM/RAM status,
   persisted job logs, safe stop-and-save, and immediate cancellation;

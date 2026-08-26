@@ -11,6 +11,7 @@ const state = {
   dialogTrigger: null,
   resourceTimer: null,
   elapsedTimer: null,
+  promptTransform: null,
 };
 
 const viewMeta = {
@@ -204,6 +205,9 @@ function generationPayload() {
   const [width, height] = resolution();
   return {
     prompt: $("#prompt").value.trim(),
+    original_prompt: state.promptTransform?.original || null,
+    prompt_transform_applied: Boolean(state.promptTransform),
+    prompt_transform_template_version: state.promptTransform?.version || null,
     profile: selectedProfile(),
     task: $("#task").value,
     width, height,
@@ -225,6 +229,45 @@ function generationPayload() {
     activation_chunk_rows: Number($("#chunkRows").value),
     vae_tile_size: Number($("#vaeTile").value),
   };
+}
+
+function structuredPromptDraft() {
+  const visual = $("#promptVisual").value.trim();
+  const sound = $("#promptSound").value.trim();
+  const music = $("#promptMusic").value.trim();
+  const instruction = state.imageAsset
+    ? "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\n"
+    : "";
+  const draft = `${instruction}integrated_multimodal_description: [Shot 1] ${visual}\n\noverall_soundscape: ${sound}\n\nnon_diegetic_music: ${music}`;
+  $("#promptDraft").value = draft;
+  return { draft, visual, sound, music };
+}
+
+function openPromptAssist() {
+  const original = state.promptTransform?.original || $("#prompt").value.trim();
+  if (!original) return toast("先に映像の内容を入力してください", "error");
+  $("#promptVisual").value = original;
+  $("#promptSound").value = "";
+  $("#promptMusic").value = "";
+  structuredPromptDraft();
+  state.dialogTrigger = document.activeElement;
+  $("#promptDialog").showModal();
+}
+
+function applyStructuredPrompt() {
+  const { draft, visual, sound, music } = structuredPromptDraft();
+  if (!visual || !sound || !music) {
+    return toast(
+      "映像・環境音・背景音楽をすべて入力してください。不要な項目は N/A と入力できます",
+      "error"
+    );
+  }
+  const original = state.promptTransform?.original || $("#prompt").value.trim();
+  state.promptTransform = { original, version: "h3-base-fields-v1" };
+  $("#prompt").value = draft;
+  $("#prompt").dispatchEvent(new Event("input"));
+  $("#promptDialog").close();
+  toast("確認したH3向けプロンプト案を適用しました");
 }
 
 async function submitGeneration(event) {
@@ -301,11 +344,15 @@ function renderLive(job) {
   $("#liveStage").textContent = job.stage || "準備中";
   $("#liveDetail").textContent = job.detail || "—";
   $("#livePercent").textContent = `${Math.round(progress)}%`;
-  $("#liveProgressBar").style.width = `${progress}%`;
+  $("#liveProgressBar").value = progress;
   $("#liveProgressTrack").setAttribute("aria-valuenow", String(Math.round(progress)));
   $("#elapsedTime").textContent = clock(activeElapsed(job));
   $("#etaTime").textContent = job.eta_seconds === 0 ? "完了" : clock(job.eta_seconds);
-  $("#liveProfile").textContent = String(job.request?.profile || "history").replace("fast_sage", "Fast Sage").replace("fast", "Fast SDPA").replace("quality", "Quality");
+  $("#liveProfile").textContent = String(job.request?.profile || "history")
+    .replace("fast_sage_detail", "高速・画質優先")
+    .replace("fast_sage", "最速")
+    .replace("fast", "Fast SDPA")
+    .replace("quality", "Quality");
   $$("#stageList span").forEach((span) => span.classList.toggle("done", progress >= Number(span.dataset.threshold)));
   const active = ["queued", "running"].includes(job.status);
   $("#stopSaveButton").disabled = !active;
@@ -357,7 +404,7 @@ function jobRow(job, index) {
   const action = ["succeeded", "partial"].includes(job.status) ? "見る" : ["running", "queued", "stopping"].includes(job.status) ? "詳細" : "ログ";
   return `<article class="job-row" data-job="${job.id}">
     <div class="job-index">${String(index + 1).padStart(2,"0")}</div>
-    <div class="job-main"><b>${escapeHTML(prompt)}</b><small>${escapeHTML(job.stage)} · ${escapeHTML(job.detail)}</small><div class="mini-progress"><i style="width:${Number(job.progress || 0)}%"></i></div></div>
+    <div class="job-main"><b>${escapeHTML(prompt)}</b><small>${escapeHTML(job.stage)} · ${escapeHTML(job.detail)}</small><div class="mini-progress"><progress max="100" value="${Number(job.progress || 0)}"></progress></div></div>
     <div class="job-stat"><span>STATUS</span><b>${statusLabels[job.status] || job.status}</b></div>
     <div class="job-stat"><span>PROFILE</span><b>${escapeHTML(profile)}</b></div>
     <button class="job-action" data-open-job="${job.id}">${action}</button>
@@ -381,7 +428,10 @@ function renderLibrary() {
   grid.innerHTML = jobs.map((job) => {
     const request = job.request || job.plan?.request || {};
     const success = ["succeeded", "partial"].includes(job.status);
-    const video = success ? `<video src="/api/jobs/${job.id}/media#t=0.1" muted preload="metadata"></video>` : "生成ログを確認";
+    const playable = success && job.media_available !== false;
+    const video = playable
+      ? `<video src="/api/jobs/${job.id}/media#t=0.1" muted preload="metadata"></video>`
+      : success ? "動画ファイルがありません" : "生成ログを確認";
     const frames = request.frames || "—";
     const size = request.width && request.height ? `${request.width}×${request.height}` : "—";
     return `<article class="library-card ${job.status}" data-open-job="${job.id}">
@@ -400,6 +450,10 @@ function openJob(jobId) {
     state.activeJobId = job.id;
     renderLive(job);
     navigate("generate");
+    return;
+  }
+  if (job.media_available === false) {
+    toast("履歴は残っていますが、動画ファイルが見つかりません", "error");
     return;
   }
   const request = job.request || job.plan?.request || {};
@@ -471,11 +525,11 @@ async function pollResources() {
     if (gpu) {
       const percent = 100 * gpu.used_bytes / gpu.total_bytes;
       $("#vramText").textContent = `${bytes(gpu.used_bytes)} / ${bytes(gpu.total_bytes)}`;
-      $("#vramMeter").style.width = `${percent}%`;
+      $("#vramMeter").value = percent;
       $("#gpuName").textContent = gpu.name;
     }
     $("#ramText").textContent = `${bytes(resources.ram_used_bytes)} / ${bytes(resources.ram_total_bytes)}`;
-    $("#ramMeter").style.width = `${resources.ram_percent}%`;
+    $("#ramMeter").value = resources.ram_percent;
   } catch { /* keep the last good sample */ }
 }
 
@@ -484,10 +538,19 @@ function bindEvents() {
   $$('[data-go]').forEach((button) => button.addEventListener("click", () => navigate(button.dataset.go)));
   $("#generationForm").addEventListener("submit", submitGeneration);
   $("#prompt").addEventListener("input", () => $("#promptCount").textContent = $("#prompt").value.length);
+  $("#structurePrompt").addEventListener("click", openPromptAssist);
+  ["#promptVisual", "#promptSound", "#promptMusic"].forEach((selector) => {
+    $(selector).addEventListener("input", structuredPromptDraft);
+  });
+  $("#applyStructuredPrompt").addEventListener("click", applyStructuredPrompt);
+  $("#promptDialog").addEventListener("close", () => {
+    state.dialogTrigger?.focus?.();
+    state.dialogTrigger = null;
+  });
   $$('[data-prompt-chip]').forEach((button) => button.addEventListener("click", () => {
     const prompt = $("#prompt"); prompt.value += `${prompt.value.trim() ? "\n\n" : ""}${button.dataset.promptChip}`; prompt.focus(); prompt.dispatchEvent(new Event("input"));
   }));
-  $("#clearPrompt").addEventListener("click", () => { $("#prompt").value = ""; $("#prompt").dispatchEvent(new Event("input")); });
+  $("#clearPrompt").addEventListener("click", () => { state.promptTransform = null; $("#prompt").value = ""; $("#prompt").dispatchEvent(new Event("input")); });
   $$('input[name="profile"]').forEach((radio) => radio.addEventListener("change", () => {
     $$(".profile-card").forEach((card) => card.classList.toggle("selected", card.contains(radio)));
     applyProfile(radio.value);
