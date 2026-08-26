@@ -210,6 +210,11 @@ class JobStore:
             ).fetchall()
         return [self._decode(row) for row in rows]
 
+    def delete(self, job_id: str) -> bool:
+        with self._lock, self._connection() as connection:
+            cursor = connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            return cursor.rowcount == 1
+
     def import_outputs(self, output_dir: Path) -> int:
         if not output_dir.is_dir():
             return 0

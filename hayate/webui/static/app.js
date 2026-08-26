@@ -12,6 +12,9 @@ const state = {
   resourceTimer: null,
   elapsedTimer: null,
   promptTransform: null,
+  dialogJobId: null,
+  deleteJobId: null,
+  deleteDialogTrigger: null,
 };
 
 const viewMeta = {
@@ -435,6 +438,7 @@ function renderLibrary() {
     const frames = request.frames || "—";
     const size = request.width && request.height ? `${request.width}×${request.height}` : "—";
     return `<article class="library-card ${job.status}" data-open-job="${job.id}">
+      <button type="button" class="library-card-delete" data-delete-job="${job.id}" aria-label="この生成を削除">削除</button>
       <div class="library-video">${video}</div>
       <div class="card-body"><div class="card-meta"><span>${statusLabels[job.status]}</span><time>${compactDate(job.created_at)}</time></div>
       <h3>${escapeHTML(request.prompt || "過去の生成結果")}</h3>
@@ -458,6 +462,7 @@ function openJob(jobId) {
   }
   const request = job.request || job.plan?.request || {};
   const dialog = $("#videoDialog");
+  state.dialogJobId = job.id;
   state.dialogTrigger = document.activeElement;
   $("#dialogVideo").src = `/api/jobs/${job.id}/media`;
   $("#dialogBadge").textContent = statusLabels[job.status].toUpperCase();
@@ -466,6 +471,45 @@ function openJob(jobId) {
   const peak = job.runtime_metrics?.cuda_peak_allocated_bytes;
   $("#dialogStats").innerHTML = `<div><small>TIME</small><b>${clock(job.duration_seconds)}</b></div><div><small>FRAMES</small><b>${request.frames || "—"}</b></div><div><small>VRAM PEAK</small><b>${bytes(peak)}</b></div>`;
   dialog.showModal();
+}
+
+function openDeleteDialog(jobId) {
+  const job = state.jobs.find((item) => item.id === jobId);
+  if (!job) return toast("削除する履歴が見つかりません", "error");
+  if (!["succeeded", "partial", "failed", "cancelled", "interrupted"].includes(job.status)) {
+    return toast("実行中または待機中の生成は削除できません", "error");
+  }
+  state.deleteJobId = job.id;
+  state.deleteDialogTrigger = $("#videoDialog").open
+    ? state.dialogTrigger
+    : document.activeElement;
+  const request = job.request || job.plan?.request || {};
+  $("#deleteDialogPrompt").textContent = request.prompt || "過去の生成結果";
+  $("#deleteDialogFilename").textContent = (job.output_path || "履歴のみ").split(/[\\/]/).pop();
+  if ($("#videoDialog").open) $("#videoDialog").close();
+  $("#deleteDialog").showModal();
+}
+
+async function deleteSelectedJob() {
+  const jobId = state.deleteJobId;
+  if (!jobId) return;
+  const button = $("#confirmDeleteJob");
+  button.disabled = true;
+  button.textContent = "削除中…";
+  try {
+    const result = await api(`/api/jobs/${jobId}`, { method: "DELETE" });
+    state.jobs = state.jobs.filter((job) => job.id !== jobId);
+    if (state.activeJobId === jobId) state.activeJobId = null;
+    $("#deleteDialog").close();
+    renderJobs();
+    const count = result.artifacts_deleted?.length || 0;
+    toast(count ? `生成履歴と関連ファイル${count}件を削除しました` : "生成履歴を削除しました");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "完全に削除";
+  }
 }
 
 async function stopActive(save) {
@@ -587,11 +631,25 @@ function bindEvents() {
   });
   $("#saveSettings").addEventListener("click", saveSettings);
   $("#librarySearch").addEventListener("input", renderLibrary); $("#libraryFilter").addEventListener("change", renderLibrary);
-  document.addEventListener("click", (event) => { const target = event.target.closest("[data-open-job]"); if (target) openJob(target.dataset.openJob); });
+  document.addEventListener("click", (event) => {
+    const deleteTarget = event.target.closest("[data-delete-job]");
+    if (deleteTarget) return openDeleteDialog(deleteTarget.dataset.deleteJob);
+    const target = event.target.closest("[data-open-job]");
+    if (target) openJob(target.dataset.openJob);
+  });
+  $("#deleteDialogJob").addEventListener("click", () => openDeleteDialog(state.dialogJobId));
+  $("#confirmDeleteJob").addEventListener("click", deleteSelectedJob);
+  $("#deleteDialog").addEventListener("close", () => {
+    state.deleteJobId = null;
+    if (state.deleteDialogTrigger?.isConnected) state.deleteDialogTrigger.focus?.();
+    else $("#librarySearch").focus();
+    state.deleteDialogTrigger = null;
+  });
   $("#closeDialog").addEventListener("click", () => $("#videoDialog").close());
   $("#videoDialog").addEventListener("close", () => {
     $("#dialogVideo").pause();
     $("#dialogVideo").removeAttribute("src");
+    state.dialogJobId = null;
     state.dialogTrigger?.focus?.();
     state.dialogTrigger = null;
   });

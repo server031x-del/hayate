@@ -23,6 +23,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from hayate import __version__
 from hayate.backends.minimax_h3 import ExternalH3GenerationBackend, GenerationRequest
+from hayate.backends.minimax_h3.generation import generation_artifact_paths
 from hayate.hardware import HardwareProfiler
 from hayate.models import ModelRegistry
 from hayate.profiles import get_generation_profile
@@ -520,6 +521,36 @@ def create_app(
         if job is None:
             raise HTTPException(404, "job not found")
         return with_media_availability(job)
+
+    @app.delete("/api/jobs/{job_id}")
+    async def delete_job(job_id: str):
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(404, "job not found")
+        if job["status"] not in FINAL_STATUSES:
+            raise HTTPException(409, "active or queued jobs cannot be deleted")
+
+        deleted: list[str] = []
+        raw_output = job.get("output_path") or ""
+        if raw_output:
+            output = persisted_artifact_path(raw_output)
+            if output.suffix.lower() != ".mp4":
+                raise HTTPException(409, "refusing to delete a non-MP4 job artifact")
+            log_path, manifest_path = generation_artifact_paths(output)
+            targets = (output, log_path, manifest_path)
+            try:
+                for target in targets:
+                    if target.is_file():
+                        target.unlink()
+                        deleted.append(target.name)
+            except OSError as exc:
+                raise HTTPException(
+                    409, f"artifact deletion failed for {target.name}: {exc}"
+                ) from exc
+
+        if not store.delete(job_id):
+            raise HTTPException(409, "job history changed before deletion completed")
+        return {"deleted": True, "job_id": job_id, "artifacts_deleted": deleted}
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str):

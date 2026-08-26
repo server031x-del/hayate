@@ -165,6 +165,48 @@ def test_persisted_history_remains_playable_after_output_directory_changes(tmp_p
         ] is False
 
 
+def test_library_delete_removes_only_final_job_artifacts_and_history(tmp_path):
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    video = output_dir / "delete-me.mp4"
+    log = output_dir / "delete-me.mp4.hayate.log"
+    manifest = output_dir / "delete-me.mp4.hayate.json"
+    unrelated = output_dir / "keep-me.txt"
+    video.write_bytes(b"video")
+    log.write_text("log", encoding="utf-8")
+    manifest.write_text("{}", encoding="utf-8")
+    unrelated.write_text("keep", encoding="utf-8")
+
+    app = create_app(tmp_path)
+    app.state.job_store.import_outputs(output_dir)
+    job = app.state.job_store.get_by_output(video)
+    assert job is not None
+    with TestClient(app) as client:
+        path = f"/api/jobs/{job['id']}"
+        assert client.delete(path).status_code == 403
+
+        app.state.job_store.update(job["id"], status="running")
+        blocked = client.delete(path, headers={"X-HAYATE-UI": "1"})
+        assert blocked.status_code == 409
+        assert video.is_file()
+
+        app.state.job_store.update(job["id"], status="succeeded")
+        response = client.delete(path, headers={"X-HAYATE-UI": "1"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["deleted"] is True
+        assert set(payload["artifacts_deleted"]) == {
+            video.name,
+            log.name,
+            manifest.name,
+        }
+        assert app.state.job_store.get(job["id"]) is None
+        assert not video.exists()
+        assert not log.exists()
+        assert not manifest.exists()
+        assert unrelated.read_text(encoding="utf-8") == "keep"
+
+
 def _fake_plan(tmp_path: Path, output: Path) -> GenerationPlan:
     code = (
         "import json,os,time; from pathlib import Path; "

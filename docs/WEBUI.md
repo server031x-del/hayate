@@ -21,6 +21,13 @@ only after the operator presses **この案を適用**. The job record retains t
 original prompt, effective prompt, and template version when this transformation
 is used.
 
+Library cards and the video detail dialog expose an explicit delete action. A
+confirmation dialog names the selected output and explains that the SQLite job
+record, MP4, matching `.hayate.log`, and matching `.hayate.json` manifest are
+permanently removed. The API accepts deletion only for final job states and
+derives the two sidecar paths from the persisted MP4 path; queued or active jobs
+and unrelated neighboring files are never deletion targets.
+
 ## Runtime layout
 
 ```text

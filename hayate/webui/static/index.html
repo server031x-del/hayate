@@ -256,7 +256,20 @@
   <dialog id="videoDialog" class="video-dialog" aria-labelledby="dialogTitle">
     <button class="dialog-close" id="closeDialog" aria-label="閉じる">×</button>
     <video id="dialogVideo" controls playsinline></video>
-    <div class="dialog-info"><div><span id="dialogBadge"></span><h2 id="dialogTitle">Generated video</h2><p id="dialogPrompt"></p></div><div id="dialogStats" class="dialog-stats"></div></div>
+    <div class="dialog-info"><div><span id="dialogBadge"></span><h2 id="dialogTitle">Generated video</h2><p id="dialogPrompt"></p></div><div class="dialog-side"><div id="dialogStats" class="dialog-stats"></div><button type="button" class="library-delete-button" id="deleteDialogJob">この生成を削除</button></div></div>
+  </dialog>
+  <dialog id="deleteDialog" class="delete-dialog" aria-labelledby="deleteDialogTitle">
+    <form method="dialog" class="delete-dialog-shell">
+      <div class="delete-dialog-icon" aria-hidden="true">×</div>
+      <span>DELETE GENERATION</span>
+      <h2 id="deleteDialogTitle">この生成を削除しますか？</h2>
+      <p id="deleteDialogPrompt"></p>
+      <div class="delete-targets"><b id="deleteDialogFilename"></b><small>生成履歴・動画・ログ・実行マニフェストを完全に削除します。この操作は元に戻せません。</small></div>
+      <div class="delete-dialog-actions">
+        <button value="cancel" class="secondary-button">キャンセル</button>
+        <button type="button" class="confirm-delete-button" id="confirmDeleteJob">完全に削除</button>
+      </div>
+    </form>
   </dialog>
   <dialog id="promptDialog" class="prompt-dialog" aria-labelledby="promptDialogTitle">
     <form method="dialog" class="prompt-dialog-shell">
