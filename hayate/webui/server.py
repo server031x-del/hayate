@@ -265,6 +265,8 @@ def create_app(
             "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
             "connect-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
         )
+        if request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     def cached_hardware() -> dict:
