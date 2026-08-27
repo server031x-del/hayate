@@ -12,6 +12,7 @@ outputs/
 configs/models.local.yaml
 .research/
 models/
+upstream/h3/
 data/webui/
 .playwright-cli/
 output/playwright/

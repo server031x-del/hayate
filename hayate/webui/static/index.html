@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260827-openai">
+  <link rel="stylesheet" href="/assets/app.css?v=20260827-model-setup">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -147,13 +147,32 @@
                 </div>
                 <label class="field-label control-label">解像度 <span id="resolutionHint">512 × 512</span></label>
                 <div class="resolution-row">
-                  <select id="resolutionPreset" aria-label="出力解像度">
-                    <option value="512x512">Square · 512</option>
-                    <option value="640x640">Square · 640</option>
-                    <option value="768x432">Landscape · 768×432</option>
-                    <option value="864x480">Wide · 864×480</option>
-                    <option value="custom">カスタム</option>
-                  </select>
+                  <div class="resolution-picker">
+                    <span class="resolution-icon" aria-hidden="true">▦</span>
+                    <select id="resolutionPreset" aria-label="出力解像度">
+                      <optgroup label="RTX 3060向け · 軽量">
+                        <option value="512x512">高速 · 正方形 512 × 512</option>
+                        <option value="512x288">高速 · 横長 512 × 288</option>
+                        <option value="288x512">高速 · 縦長 288 × 512</option>
+                        <option value="640x640">標準 · 正方形 640 × 640</option>
+                        <option value="768x448">標準 · 横長 768 × 448</option>
+                        <option value="864x480">標準 · ワイド 864 × 480</option>
+                      </optgroup>
+                      <optgroup label="高精細 · RAM/VRAM多め">
+                        <option value="576x768">高精細 · 縦長 576 × 768</option>
+                        <option value="768x1024">高精細 · 縦長 768 × 1024</option>
+                        <option value="1024x576">HD · 横長 1024 × 576</option>
+                        <option value="1280x736">HD映画 · 1280 × 736</option>
+                        <option value="1536x864">最高精細 · 1536 × 864</option>
+                      </optgroup>
+                      <option value="custom">カスタム · 32の倍数</option>
+                    </select>
+                    <span class="resolution-chevron" aria-hidden="true">⌄</span>
+                  </div>
+                  <div class="resolution-meta" aria-live="polite">
+                    <span id="resolutionTier" class="resolution-tier fast">FAST</span>
+                    <span id="resolutionDescription">RTX 3060で速度を優先する安全な基準サイズ</span>
+                  </div>
                   <div class="dimension-fields" id="customResolution" hidden>
                     <input id="width" type="number" min="256" max="1536" step="32" value="512" aria-label="幅">
                     <span>×</span>
@@ -256,7 +275,22 @@
               <label><span>PDD AdaLN affine map</span><div><input id="settingPddAffine" type="text"><i data-ready="pdd_adaln_affine_path"></i></div><small>released 2688次元をpruned 8次元へ投影</small></label>
             </div>
             <div class="divider"></div>
-            <div class="section-heading compact"><div><span class="step-number">B</span><h2>AI prompt director</h2></div><span class="counter" id="openaiKeyStatus">未設定</span></div>
+            <div class="section-heading compact"><div><span class="step-number">B</span><h2>モデルセットアップ</h2></div><span class="counter" id="modelSetupSummary">未確認</span></div>
+            <div class="model-setup-box">
+              <div class="model-setup-head">
+                <div><b>MiniMax H3モデル</b><small>標準フォルダを作成し、検証済みの公開モデルだけを再開可能な形で取得します。</small></div>
+                <div class="model-setup-actions">
+                  <button type="button" class="secondary-button small" id="prepareModelDirs">標準フォルダを準備</button>
+                  <button type="button" class="secondary-button small" id="applyStandardPaths" title="HAYATE標準モデルフォルダを設定に反映">標準パスを適用</button>
+                  <button type="button" class="text-button" id="refreshModelSetup">再スキャン</button>
+                </div>
+              </div>
+              <label class="model-license-consent"><input id="modelLicenseConsent" type="checkbox"><span>各モデルのライセンスと利用規約を確認しました（ダウンロードを有効化）</span></label>
+              <div class="model-asset-list" id="modelAssetList"><div class="model-setup-empty">モデル状態を確認しています…</div></div>
+              <p class="model-setup-note">大容量ファイルはGitに含めません。取得先・revision・SHA-256を固定し、中断後も安全に再実行できます。利用規約と容量を確認してからダウンロードしてください。</p>
+            </div>
+            <div class="divider"></div>
+            <div class="section-heading compact"><div><span class="step-number">C</span><h2>AI prompt director</h2></div><span class="counter" id="openaiKeyStatus">未設定</span></div>
             <div class="ai-settings-fields">
               <label><span>OpenAI model ID</span><input id="settingOpenAIModel" type="text" autocomplete="off" placeholder="gpt-5.6-terra"><small>標準は品質と費用のバランスが良い gpt-5.6-terra。任意の対応モデルIDへ変更できます。</small></label>
               <label><span>OpenAI API key</span><input id="settingOpenAIKey" type="password" autocomplete="new-password" placeholder="保存済みなら空欄のまま"><small>キーは画面に再表示せず、Windows Credential Managerへ保存します。未対応環境ではこのサーバーの実行中だけ保持します。</small></label>
@@ -324,6 +358,6 @@
     </form>
   </dialog>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/assets/app.js?v=20260827-openai" defer></script>
+  <script src="/assets/app.js?v=20260827-model-setup" defer></script>
 </body>
 </html>

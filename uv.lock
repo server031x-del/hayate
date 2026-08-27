@@ -832,6 +832,7 @@ generation = [
 ]
 webui = [
     { name = "fastapi" },
+    { name = "huggingface-hub" },
     { name = "keyring" },
     { name = "openai" },
     { name = "pillow" },
@@ -856,6 +857,7 @@ requires-dist = [
     { name = "einops", marker = "extra == 'generation'", specifier = ">=0.8" },
     { name = "fastapi", marker = "extra == 'webui'", specifier = ">=0.116,<1" },
     { name = "huggingface-hub", marker = "extra == 'generation'", specifier = ">=0.30" },
+    { name = "huggingface-hub", marker = "extra == 'webui'", specifier = ">=0.30" },
     { name = "imageio-ffmpeg", marker = "extra == 'generation'", specifier = ">=0.6" },
     { name = "keyring", marker = "extra == 'webui'", specifier = ">=25,<26" },
     { name = "numpy", marker = "extra == 'cuda'", specifier = ">=2.0" },

@@ -39,6 +39,7 @@ from hayate.models import ModelRegistry
 from hayate.profiles import get_generation_profile
 from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
+from hayate.webui.model_setup import ModelSetupError, ModelSetupService
 from hayate.webui.openai_settings import (
     DEFAULT_OPENAI_MODEL,
     OpenAISettingsStore,
@@ -103,6 +104,11 @@ class PromptAssistantPayload(BaseModel):
         if value % 32:
             raise ValueError("must be a multiple of 32")
         return value
+
+
+class ModelDownloadPayload(BaseModel):
+    asset_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
+    license_accepted: bool = False
 
 
 def _normalize_trusted_client_networks(
@@ -268,6 +274,7 @@ def create_app(
     *,
     job_manager: JobManager | None = None,
     openai_store: OpenAISettingsStore | None = None,
+    model_setup_service: ModelSetupService | None = None,
     trusted_hosts: list[str] | None = None,
     trusted_client_networks: list[str] | tuple[str, ...] | None = None,
 ) -> FastAPI:
@@ -277,6 +284,9 @@ def create_app(
     settings_store = SettingsStore(data_dir / "settings.json", root)
     openai_settings_store = openai_store or OpenAISettingsStore(
         data_dir / "openai-settings.json"
+    )
+    model_setup = model_setup_service or ModelSetupService(
+        root, state_path=data_dir / "model-setup.json"
     )
     instance_lease = GPULease(
         data_dir / "webui-server.lock",
@@ -323,6 +333,7 @@ def create_app(
     app.state.workspace = root
     app.state.settings_store = settings_store
     app.state.openai_settings_store = openai_settings_store
+    app.state.model_setup_service = model_setup
     app.state.job_store = store
     app.state.job_manager = manager
     app.state.network_exposed = trusted_hosts == ["*"]
@@ -475,6 +486,58 @@ def create_app(
             "readiness": SettingsStore.readiness(current),
             "openai": openai_settings_store.public_dict(),
         }
+
+    @app.get("/api/models/setup")
+    async def get_model_setup():
+        return await asyncio.to_thread(model_setup.status)
+
+    @app.post("/api/models/setup/prepare")
+    async def prepare_model_setup(request: Request):
+        ensure_local_secret_action(request)
+        return await asyncio.to_thread(model_setup.prepare)
+
+    @app.post("/api/models/setup/apply-standard")
+    async def apply_standard_model_paths(request: Request):
+        """Explicitly point the model-related settings at HAYATE's folders."""
+
+        ensure_local_secret_action(request)
+        defaults = WebUISettings.defaults(root).to_dict()
+        current_values = settings_store.load().to_dict()
+        for key in (
+            "config_path",
+            "checkpoint_dir",
+            "pdd_checkpoint_path",
+            "pdd_adaln_affine_path",
+        ):
+            current_values[key] = defaults[key]
+        current = settings_store.save(WebUISettings(**current_values))
+        Path(current.output_dir).mkdir(parents=True, exist_ok=True)
+        Path(current.prompt_cache_dir).mkdir(parents=True, exist_ok=True)
+        store.import_outputs(Path(current.output_dir))
+        return {
+            "settings": current.to_dict(),
+            "readiness": SettingsStore.readiness(current),
+            "openai": openai_settings_store.public_dict(),
+        }
+
+    @app.post("/api/models/setup/download", status_code=202)
+    async def download_model(payload: ModelDownloadPayload, request: Request):
+        ensure_local_secret_action(request)
+        try:
+            return await asyncio.to_thread(
+                model_setup.start_download,
+                payload.asset_id,
+                license_accepted=payload.license_accepted,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "unknown model asset") from exc
+        except ModelSetupError as exc:
+            status_code = 422 if not payload.license_accepted else 409
+            raise HTTPException(status_code, str(exc)) from exc
+
+    @app.get("/api/models/setup/downloads")
+    async def get_model_downloads():
+        return {"downloads": await asyncio.to_thread(model_setup.downloads)}
 
     @app.put("/api/settings")
     async def put_settings(payload: SettingsPayload, request: Request):

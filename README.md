@@ -44,6 +44,19 @@ Apache-2.0 headers can be vendored later with their notices retained.
 
 Install [uv](https://docs.astral.sh/uv/), then from this directory:
 
+On Windows, the one-click bootstrap creates the standard directories and
+installs the generation/WebUI extras. It does not download model weights:
+
+```powershell
+.\SETUP_HAYATE.cmd
+```
+
+The same setup can be run from PowerShell with `.\scripts\setup_hayate.ps1`.
+It also obtains the audited `maybleMyers/h3` commit into `upstream/h3` without
+modifying an existing checkout. Use `-SkipSync` to skip dependency installation
+or `-SkipUpstream` when an external h3 checkout will be configured. See
+[`docs/SETUP.md`](docs/SETUP.md) for Linux/WSL and first-run details.
+
 ```powershell
 uv sync
 uv run hayate inspect
@@ -231,11 +244,20 @@ same PC or use the machine's LAN address from another trusted device. Use
 The first launch discovers existing MP4 outputs and their HAYATE manifests.
 Runtime paths can then be reviewed and saved from the Settings screen.
 
+The Settings screen also has a model setup panel. It creates the standard
+`models/` directories, scans the four H3 single-file targets plus optional
+acceleration assets, and exposes download buttons only for pinned, verified
+Hugging Face sources. A license acknowledgement is required for each download;
+weights are never copied into Git or silently overwritten.
+
 Studio includes:
 
 - unchanged Fast Sage (`最速`), a Fast Sage Detail (`高速・画質優先`)
   profile with one extra late refinement, Fast SDPA, Quality, and fully custom
   generation profiles;
+- readable resolution presets from lightweight 512px social formats through
+  16:9 HD, grouped by RTX 3060-friendly and high-detail memory tiers, plus a
+  32-pixel custom mode;
 - T2V/I2V image upload, duration snapping to MiniMax H3 frame geometry, prompt
   cache, EasyCache, block swap, activation chunking, and VAE controls;
 - an explicit MiniMax H3 prompt assistant that previews and applies structured

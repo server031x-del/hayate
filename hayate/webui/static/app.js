@@ -13,6 +13,8 @@ const state = {
   elapsedTimer: null,
   promptTransform: null,
   promptAI: null,
+  modelSetup: null,
+  modelTimer: null,
   dialogJobId: null,
   deleteJobId: null,
   deleteDialogTrigger: null,
@@ -31,6 +33,33 @@ const statusLabels = {
 };
 
 const THEME_KEY = "hayate-studio-theme";
+
+// Keep the public presets conservative for the reference RTX 3060 path.  The
+// model itself accepts 32-pixel geometry; these labels make the memory/time
+// trade-off visible before a job is submitted.
+const RESOLUTION_PRESETS = {
+  "512x512": { tier: "FAST", className: "fast", description: "RTX 3060で速度を優先する安全な基準サイズ" },
+  "512x288": { tier: "FAST", className: "fast", description: "横長SNS向け。軽量で試作に適した16:9" },
+  "288x512": { tier: "FAST", className: "fast", description: "縦長SNS向け。軽量で試作に適した9:16" },
+  "640x640": { tier: "STANDARD", className: "standard", description: "正方形の標準サイズ。速度と細部のバランス" },
+  "768x448": { tier: "STANDARD", className: "standard", description: "横長の標準サイズ。5秒CMの基準におすすめ" },
+  "864x480": { tier: "STANDARD", className: "standard", description: "ワイド画角の標準サイズ。映画的な構図向け" },
+  "576x768": { tier: "DETAIL", className: "detail", description: "縦長の高精細。RAM/VRAM使用量が増えます" },
+  "768x1024": { tier: "DETAIL", className: "detail", description: "縦長HD。RTX 3060では長尺生成に注意" },
+  "1024x576": { tier: "DETAIL", className: "detail", description: "16:9 HD。品質優先の書き出し向け" },
+  "1280x736": { tier: "DETAIL", className: "detail", description: "HD映画サイズ。32GB RAMと十分な空き容量を推奨" },
+  "1536x864": { tier: "DETAIL", className: "detail", description: "最高精細16:9。時間・メモリ負荷が最大です" },
+  custom: { tier: "CUSTOM", className: "custom", description: "幅・高さを32の倍数で指定してください" },
+};
+const MODEL_ROLE_LABELS = {
+  transformer: "DiT",
+  text_encoder: "TEXT",
+  video_vae: "VIDEO VAE",
+  audio_vae: "AUDIO VAE",
+  pdd_lora: "PDD LoRA",
+  pdd_affine: "AdaLN",
+  checkpoint_support: "SUPPORT",
+};
 
 function savedTheme() {
   try {
@@ -172,10 +201,18 @@ function resolution() {
 }
 
 function updateResolution() {
-  const custom = $("#resolutionPreset").value === "custom";
+  const preset = $("#resolutionPreset").value;
+  const custom = preset === "custom";
   $("#customResolution").hidden = !custom;
   const [width, height] = resolution();
   $("#resolutionHint").textContent = `${width} × ${height}`;
+  const info = RESOLUTION_PRESETS[preset] || RESOLUTION_PRESETS.custom;
+  const tier = $("#resolutionTier");
+  tier.textContent = info.tier;
+  tier.className = `resolution-tier ${info.className}`;
+  $("#resolutionDescription").textContent = custom
+    ? `${info.description}（現在 ${width} × ${height}）`
+    : info.description;
 }
 
 async function uploadImage(file) {
@@ -622,6 +659,135 @@ function renderSettings(settings, readiness, openai = state.bootstrap?.openai) {
   $(".engine-pill").classList.toggle("ready", ready);
 }
 
+function modelAssetStatus(asset) {
+  if (asset.status === "downloading" || asset.download_status === "downloading") return "downloading";
+  if (asset.status === "invalid") return "invalid";
+  if (asset.status === "error" || asset.download_status === "error") return "retry";
+  if (asset.status === "verified" || asset.verified) return "ready";
+  if (asset.status === "present_unverified") return "present";
+  if (asset.exists) return "present";
+  return "missing";
+}
+
+function modelAssetStatusLabel(asset, status) {
+  if (status === "ready") return asset.verified || asset.status === "verified" ? "検証済み・使用可能" : "ファイルあり（未検証）";
+  if (status === "downloading") {
+    const progress = asset.progress ?? asset.download_progress;
+    return Number.isFinite(Number(progress)) ? `ダウンロード中… ${Math.round(Number(progress))}%` : "ダウンロード中…";
+  }
+  if (status === "invalid") return "既存ファイルのサイズが一致しません。削除・配置を確認してください";
+  if (status === "retry") return asset.error || asset.message || "取得に失敗しました。再試行できます";
+  if (status === "present") return "ファイルあり・SHA-256検証が必要です";
+  return asset.downloadable === false ? "未配置・公開元を確認して手動配置" : "未配置";
+}
+
+function renderModelSetup(payload) {
+  state.modelSetup = payload || {};
+  const assets = payload?.assets || payload?.models || [];
+  const ready = assets.filter((asset) => modelAssetStatus(asset) === "ready").length;
+  $("#modelSetupSummary").textContent = assets.length ? `${ready} / ${assets.length} 準備済み` : "モデル未確認";
+  const list = $("#modelAssetList");
+  if (!assets.length) {
+    list.innerHTML = '<div class="model-setup-empty">モデルカタログを読み込めませんでした。再スキャンしてください。</div>';
+    return;
+  }
+  const consent = $("#modelLicenseConsent").checked;
+  list.innerHTML = assets.map((asset) => {
+    const status = modelAssetStatus(asset);
+    const size = asset.size_label || (asset.size_bytes ? bytes(asset.size_bytes) : "容量不明");
+    const role = asset.role_label || MODEL_ROLE_LABELS[asset.role] || asset.role || "H3";
+    const filename = asset.filename || asset.name || asset.label || asset.id;
+    const path = asset.path || asset.relative_path || "標準フォルダ";
+    const sourceUrl = typeof asset.source_url === "string" && asset.source_url.startsWith("https://")
+      ? asset.source_url : "";
+    const licenseUrl = typeof asset.license_url === "string" && asset.license_url.startsWith("https://")
+      ? asset.license_url : "";
+    const provenance = [
+      sourceUrl ? `<a class="model-source" href="${escapeHTML(sourceUrl)}" target="_blank" rel="noreferrer">公開元</a>` : "",
+      licenseUrl ? `<a class="model-source" href="${escapeHTML(licenseUrl)}" target="_blank" rel="noreferrer">規約</a>` : "",
+    ].filter(Boolean).join(" · ");
+    const canDownload = Boolean(asset.downloadable) && status !== "ready" && status !== "invalid" && status !== "downloading" && consent;
+    const actionLabel = status === "ready" ? "準備済み" : status === "present" ? "検証" : status === "downloading" ? "取得中…" : status === "invalid" ? "要確認" : status === "retry" ? "再試行" : asset.downloadable === false ? "手動配置" : "ダウンロード";
+    const progress = status === "downloading" && Number.isFinite(Number(asset.progress ?? asset.download_progress))
+      ? `<div class="model-progress"><span style="width:${Math.max(0, Math.min(100, Number(asset.progress ?? asset.download_progress)))}%"></span></div>` : "";
+    return `<article class="model-asset" data-model-id="${escapeHTML(asset.id || "")}">
+      <div class="model-asset-main">
+        <div class="model-asset-title"><span class="model-asset-role">${escapeHTML(role)}</span><b title="${escapeHTML(filename)}">${escapeHTML(asset.label || filename)}</b></div>
+        <span class="model-asset-meta" title="${escapeHTML(path)}">${escapeHTML(filename)} · ${escapeHTML(size)}${provenance ? ` · ${provenance}` : ""}</span>
+        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${progress}
+      </div>
+      <button type="button" class="model-asset-action" data-model-download="${escapeHTML(asset.id || "")}" ${canDownload ? "" : "disabled"}>${actionLabel}</button>
+    </article>`;
+  }).join("");
+  const active = assets.some((asset) => modelAssetStatus(asset) === "downloading");
+  if (active && !state.modelTimer) {
+    state.modelTimer = setInterval(() => refreshModelSetup(true), 4000);
+  } else if (!active && state.modelTimer) {
+    clearInterval(state.modelTimer);
+    state.modelTimer = null;
+  }
+}
+
+async function refreshModelSetup(silent = false) {
+  try {
+    const payload = await api("/api/models/setup");
+    renderModelSetup(payload);
+  } catch (error) {
+    $("#modelSetupSummary").textContent = "確認できません";
+    $("#modelAssetList").innerHTML = `<div class="model-setup-empty">${escapeHTML(error.message)}</div>`;
+    if (!silent) toast(error.message, "error");
+  }
+}
+
+async function prepareModelDirs() {
+  const button = $("#prepareModelDirs");
+  button.disabled = true;
+  try {
+    const result = await api("/api/models/setup/prepare", { method: "POST", body: {} });
+    if (result.settings && state.bootstrap) {
+      state.bootstrap.settings = result.settings;
+      renderSettings(result.settings, result.readiness, result.openai);
+    }
+    await refreshModelSetup(true);
+    toast("標準モデルフォルダを準備しました");
+  } catch (error) { toast(error.message, "error"); }
+  finally { button.disabled = false; }
+}
+
+async function applyStandardPaths() {
+  if (!confirm("HAYATE標準のモデルパスを設定に反映しますか？\n現在のカスタム checkpoint / PDD パスは置き換わります。")) return;
+  const button = $("#applyStandardPaths");
+  button.disabled = true;
+  try {
+    const result = await api("/api/models/setup/apply-standard", { method: "POST", body: {} });
+    if (state.bootstrap) state.bootstrap.settings = result.settings;
+    renderSettings(result.settings, result.readiness, result.openai);
+    toast("標準モデルパスを設定に反映しました");
+    await refreshModelSetup(true);
+  } catch (error) { toast(error.message, "error"); }
+  finally { button.disabled = false; }
+}
+
+async function downloadModel(assetId) {
+  if (!$("#modelLicenseConsent").checked) {
+    toast("ライセンス確認にチェックを入れてからダウンロードしてください", "error");
+    return;
+  }
+  const button = $$("[data-model-download]").find((item) => item.dataset.modelDownload === assetId);
+  if (button) { button.disabled = true; button.textContent = "準備中…"; }
+  try {
+    await api("/api/models/setup/download", {
+      method: "POST",
+      body: { asset_id: assetId, license_accepted: true },
+    });
+    await refreshModelSetup(true);
+    toast("モデルのダウンロードを開始しました。設定画面で進捗を確認できます");
+  } catch (error) {
+    if (button) { button.disabled = false; button.textContent = "ダウンロード"; }
+    toast(error.message, "error");
+  }
+}
+
 async function saveSettings() {
   const payload = {
     config_path: $("#settingConfig").value.trim(),
@@ -733,6 +899,14 @@ function bindEvents() {
     applyTheme(next);
   });
   $("#saveSettings").addEventListener("click", saveSettings);
+  $("#prepareModelDirs").addEventListener("click", prepareModelDirs);
+  $("#applyStandardPaths").addEventListener("click", applyStandardPaths);
+  $("#refreshModelSetup").addEventListener("click", () => refreshModelSetup());
+  $("#modelLicenseConsent").addEventListener("change", () => renderModelSetup(state.modelSetup));
+  $("#modelAssetList").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-model-download]");
+    if (button) downloadModel(button.dataset.modelDownload);
+  });
   $("#librarySearch").addEventListener("input", renderLibrary); $("#libraryFilter").addEventListener("change", renderLibrary);
   document.addEventListener("click", (event) => {
     const deleteTarget = event.target.closest("[data-delete-job]");
@@ -772,6 +946,8 @@ async function initialize() {
     applyProfile(selectedProfile());
     $("#version").textContent = bootstrap.version;
     renderSettings(bootstrap.settings, bootstrap.readiness, bootstrap.openai);
+    renderModelSetup({ assets: [] });
+    await refreshModelSetup(true);
     renderHardware(bootstrap.hardware);
     renderJobs();
     const live = state.jobs.find((job) => ["running", "stopping", "cancelling", "queued"].includes(job.status));

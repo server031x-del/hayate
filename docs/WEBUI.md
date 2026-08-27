@@ -47,6 +47,29 @@ client CIDR, replace the `--trusted-client-network` value in
 `START_HAYATE_WEBUI.cmd`; the value must match the source address seen by this
 server. Additional networks can be supplied by repeating the option.
 
+## Model setup
+
+Settings includes a **MiniMax H3モデル** panel. **標準フォルダを準備** creates
+`models/minimax-h3-snapshot`, `models/text_encoders`, `models/vae`, and
+`models/lora` without touching existing files. **標準パスを適用** is a separate,
+explicit action that points the model registry, support snapshot, and PDD paths
+at those folders while preserving the configured upstream checkout, output, and
+Python paths.
+
+The catalog is an allowlist of the audited W4A8 transformer, NVFP4/AWQ text
+encoder, INT8 ConvRot Video VAE, FP32 Audio VAE, PDD Acc LoRA, AdaLN affine map,
+and the small upstream support-file set. Each entry pins a Hugging Face commit,
+expected size, and SHA-256. The operator must acknowledge the model terms
+before a download is accepted. Downloads run outside the generation queue, use
+an in-volume temporary directory, verify before atomic placement, and never
+overwrite a non-matching file. An interrupted or failed transfer can be safely
+re-run after its temporary directory is cleaned on the next startup; byte-range
+resume is not promised.
+
+The generation screen groups resolution presets by RTX 3060-friendly light
+formats and higher-detail RAM/VRAM tiers. Custom width and height remain limited
+to 32-pixel multiples and the server validates the same constraint.
+
 Library cards and the video detail dialog expose an explicit delete action. A
 confirmation dialog names the selected output and explains that the SQLite job
 record, MP4, matching `.hayate.log`, and matching `.hayate.json` manifest are

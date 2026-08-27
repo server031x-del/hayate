@@ -133,7 +133,7 @@ def test_webui_static_shell_and_mutation_security(tmp_path):
         response = client.get("/")
         assert response.status_code == 200
         assert "HAYATE Studio" in response.text
-        assert "app.js?v=20260827-openai" in response.text
+        assert "app.js?v=20260827-model-setup" in response.text
         assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
 
         asset = client.get("/assets/app.js?v=20260827-pdd")
