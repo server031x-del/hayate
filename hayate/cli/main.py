@@ -200,6 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="override the host and bind only to 127.0.0.1",
     )
+    webui_parser.add_argument(
+        "--trusted-client-network",
+        action="append",
+        default=[],
+        metavar="CIDR",
+        help="allow OpenAI settings and prompt authoring from this client network (repeatable)",
+    )
     return parser
 
 
@@ -532,6 +539,7 @@ def run_webui_command(args: argparse.Namespace) -> int:
         port=args.port,
         open_browser=args.open_browser,
         allow_network=False if local_only else args.allow_network,
+        trusted_client_networks=args.trusted_client_network,
         workspace=Path.cwd(),
     )
     return 0

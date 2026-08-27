@@ -18,6 +18,11 @@ def test_webui_defaults_to_lan_bind_with_loopback_opt_out():
     local = build_parser().parse_args(["webui", "--local-only"])
     assert local.local_only is True
 
+    vpn = build_parser().parse_args(
+        ["webui", "--trusted-client-network", "10.8.0.0/24"]
+    )
+    assert vpn.trusted_client_network == ["10.8.0.0/24"]
+
 
 def test_cli_startup_and_inspect(tmp_path, capsys):
     model = write_dummy_safetensors(tmp_path / "audio.safetensors", [("weight", "F32", [2])], {})

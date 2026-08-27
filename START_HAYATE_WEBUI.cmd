@@ -9,5 +9,6 @@ if not exist ".venv\Scripts\hayate.exe" (
   exit /b 1
 )
 
-".venv\Scripts\hayate.exe" webui --host 0.0.0.0 --port 7860 --open-browser --allow-network
+rem OpenVPN tunnel detected on this host: 10.8.0.0/24
+".venv\Scripts\hayate.exe" webui --host 0.0.0.0 --port 7860 --open-browser --allow-network --trusted-client-network 10.8.0.0/24
 if errorlevel 1 pause

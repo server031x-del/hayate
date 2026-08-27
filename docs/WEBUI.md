@@ -41,6 +41,11 @@ existing prompt) the current prompt text.
 If Credential Manager reports a deletion failure, the API returns an error and
 the configured status remains visible instead of claiming that the key was
 removed.
+When using the included launcher, the detected OpenVPN network
+`10.8.0.0/24` is allowed for these two operations. If your VPN uses another
+client CIDR, replace the `--trusted-client-network` value in
+`START_HAYATE_WEBUI.cmd`; the value must match the source address seen by this
+server. Additional networks can be supplied by repeating the option.
 
 Library cards and the video detail dialog expose an explicit delete action. A
 confirmation dialog names the selected output and explains that the SQLite job
@@ -96,9 +101,11 @@ WebUI generation owns GPU 0.
 - Default bind: `0.0.0.0:7860` for trusted-LAN access; the interface remains
   unauthenticated. Use `--local-only` or `--host 127.0.0.1` for loopback-only
   operation.
-- OpenAI credential mutation and `/api/prompt-assistant` are loopback-only when
-  the server uses a non-loopback bind; use a real authenticated, encrypted
-  reverse proxy before exposing a paid API credential to a network.
+- OpenAI credential mutation and `/api/prompt-assistant` accept loopback and
+  only the explicitly configured `--trusted-client-network` CIDRs when the
+  server uses a non-loopback bind. The included launcher permits the private
+  OpenVPN range `10.8.0.0/24`; use a real authenticated, encrypted reverse
+  proxy before exposing a paid API credential to any other network.
 - No CORS is enabled. Mutating API calls require the HAYATE UI header and a
   same-origin request. Trusted hosts and a restrictive Content Security Policy
   are applied.

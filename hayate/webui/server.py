@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import random
@@ -102,6 +103,34 @@ class PromptAssistantPayload(BaseModel):
         if value % 32:
             raise ValueError("must be a multiple of 32")
         return value
+
+
+def _normalize_trusted_client_networks(
+    values: list[str] | tuple[str, ...] | None,
+) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for value in values or ():
+        try:
+            network = ipaddress.ip_network(str(value).strip(), strict=False)
+        except ValueError as exc:
+            raise ValueError(f"invalid trusted client network: {value}") from exc
+        if network not in networks:
+            networks.append(network)
+    return tuple(networks)
+
+
+def _is_trusted_client(
+    client_host: str,
+    networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...],
+) -> bool:
+    try:
+        address = ipaddress.ip_address(client_host)
+    except ValueError:
+        return False
+    candidates: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...] = (address,)
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        candidates += (address.ipv4_mapped,)
+    return any(candidate in network for candidate in candidates for network in networks)
 
 
 class GenerationPayload(BaseModel):
@@ -240,6 +269,7 @@ def create_app(
     job_manager: JobManager | None = None,
     openai_store: OpenAISettingsStore | None = None,
     trusted_hosts: list[str] | None = None,
+    trusted_client_networks: list[str] | tuple[str, ...] | None = None,
 ) -> FastAPI:
     root = (workspace or Path.cwd()).resolve(strict=False)
     data_dir = root / "data" / "webui"
@@ -296,6 +326,9 @@ def create_app(
     app.state.job_store = store
     app.state.job_manager = manager
     app.state.network_exposed = trusted_hosts == ["*"]
+    app.state.trusted_client_networks = _normalize_trusted_client_networks(
+        trusted_client_networks
+    )
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=trusted_hosts
@@ -376,16 +409,19 @@ def create_app(
         return candidate.resolve(strict=False)
 
     def ensure_local_secret_action(request: Request) -> None:
-        """Do not expose credential mutation or paid AI calls over LAN."""
+        """Allow loopback and explicitly trusted VPN clients only."""
 
         if not app.state.network_exposed:
             return
         client_host = request.client.host if request.client else ""
-        if client_host not in {"127.0.0.1", "::1", "localhost"}:
-            raise HTTPException(
-                403,
-                "OpenAIの設定とAIプロンプト作成はローカル接続でのみ利用できます",
-            )
+        if client_host in LOOPBACK_HOSTS or _is_trusted_client(
+            client_host, app.state.trusted_client_networks
+        ):
+            return
+        raise HTTPException(
+            403,
+            "OpenAIの設定とAIプロンプト作成はローカル接続または許可済みVPNからのみ利用できます",
+        )
 
     def with_media_availability(job: dict) -> dict:
         enriched = dict(job)
@@ -802,6 +838,7 @@ def run_webui(
     port: int = 7860,
     open_browser: bool = False,
     allow_network: bool = True,
+    trusted_client_networks: list[str] | tuple[str, ...] | None = None,
     workspace: Path | None = None,
 ) -> None:
     network_bind = host not in LOOPBACK_HOSTS
@@ -818,6 +855,7 @@ def run_webui(
             if network_bind
             else [host, "127.0.0.1", "localhost", "[::1]"]
         ),
+        trusted_client_networks=trusted_client_networks,
     )
     if open_browser:
         browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host

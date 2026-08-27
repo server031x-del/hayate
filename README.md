@@ -251,8 +251,11 @@ Studio includes:
   display modes and no Node.js requirement at runtime.
 
 The default binds to `0.0.0.0` for trusted-LAN access and there is no
-authentication layer. Use `--local-only` on an untrusted network; do not expose
-the interface to the public internet. Uploaded images, prompts,
+authentication layer. The included launcher permits the detected private
+OpenVPN range `10.8.0.0/24` to register the OpenAI key and use AI prompt
+authoring; change its `--trusted-client-network` value if your VPN CIDR differs.
+Use `--local-only` on an untrusted network; do not expose the interface to the
+public internet. Uploaded images, prompts,
 job history, settings, and the SQLite database remain under `data/webui/`; model
 weights are referenced in place and are not copied. The OpenAI API key is not
 stored in that directory: the Settings password field uses Windows Credential

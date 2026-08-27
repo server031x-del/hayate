@@ -24,10 +24,23 @@ from hayate.webui.openai_settings import OpenAISettingsStore
 from hayate.webui.progress import H3ProgressParser
 from hayate.webui.server import (
     GenerationPayload,
+    _is_trusted_client,
+    _normalize_trusted_client_networks,
     _nearest_h3_frame_count,
     _profile_values,
     create_app,
 )
+
+
+def test_vpn_client_allowlist_matches_ipv4_and_mapped_ipv6_addresses():
+    networks = _normalize_trusted_client_networks(["10.8.0.0/24", "fd42::/64"])
+    assert _is_trusted_client("10.8.0.44", networks)
+    assert _is_trusted_client("::ffff:10.8.0.44", networks)
+    assert _is_trusted_client("fd42::25", networks)
+    assert not _is_trusted_client("10.9.0.44", networks)
+    assert not _is_trusted_client("not-an-ip", networks)
+    with pytest.raises(ValueError):
+        _normalize_trusted_client_networks(["not-a-cidr"])
 
 
 def test_h3_duration_snaps_to_supported_frame_geometry():
