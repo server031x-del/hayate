@@ -180,15 +180,25 @@ def build_parser() -> argparse.ArgumentParser:
     load_parser.add_argument("--cudnn-benchmark", action="store_true")
 
     webui_parser = subparsers.add_parser(
-        "webui", help="launch the local HAYATE Studio generation interface"
+        "webui", help="launch the HAYATE Studio generation interface"
     )
-    webui_parser.add_argument("--host", default="127.0.0.1")
+    webui_parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="bind address (default: 0.0.0.0; use --local-only for loopback)",
+    )
     webui_parser.add_argument("--port", type=int, default=7860)
     webui_parser.add_argument("--open-browser", action="store_true")
     webui_parser.add_argument(
         "--allow-network",
         action="store_true",
-        help="allow a non-loopback bind; this exposes local model controls to the network",
+        default=True,
+        help="allow a non-loopback bind (default; retained for compatibility)",
+    )
+    webui_parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="override the host and bind only to 127.0.0.1",
     )
     return parser
 
@@ -516,11 +526,12 @@ def run_webui_command(args: argparse.Namespace) -> int:
         raise HayateError(
             "WebUI dependencies are missing; run `uv sync --extra webui --extra generation`"
         ) from exc
+    local_only = bool(getattr(args, "local_only", False))
     run_webui(
-        host=args.host,
+        host="127.0.0.1" if local_only else args.host,
         port=args.port,
         open_browser=args.open_browser,
-        allow_network=args.allow_network,
+        allow_network=False if local_only else args.allow_network,
         workspace=Path.cwd(),
     )
     return 0

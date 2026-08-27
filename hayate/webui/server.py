@@ -54,6 +54,7 @@ PROFILE_NAMES = (
     "pdd_sage",
     "custom",
 )
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ASSET_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 IMAGE_SIGNATURES = {
@@ -797,15 +798,16 @@ def create_app(
 
 def run_webui(
     *,
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
     port: int = 7860,
     open_browser: bool = False,
-    allow_network: bool = False,
+    allow_network: bool = True,
     workspace: Path | None = None,
 ) -> None:
-    if host not in {"127.0.0.1", "localhost", "::1"} and not allow_network:
+    network_bind = host not in LOOPBACK_HOSTS
+    if network_bind and not allow_network:
         raise ValueError(
-            "network binding requires --allow-network; local-only is the safe default"
+            "network binding requires --allow-network; use --host 127.0.0.1 for local-only mode"
         )
     import uvicorn
 
@@ -813,12 +815,13 @@ def run_webui(
         workspace,
         trusted_hosts=(
             ["*"]
-            if allow_network
+            if network_bind
             else [host, "127.0.0.1", "localhost", "[::1]"]
         ),
     )
     if open_browser:
-        timer = threading.Timer(1.2, webbrowser.open, args=(f"http://{host}:{port}",))
+        browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+        timer = threading.Timer(1.2, webbrowser.open, args=(f"http://{browser_host}:{port}",))
         timer.daemon = True
         timer.start()
     uvicorn.run(app, host=host, port=port, log_level="info")

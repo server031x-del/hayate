@@ -262,10 +262,10 @@
               <label><span>OpenAI API key</span><input id="settingOpenAIKey" type="password" autocomplete="new-password" placeholder="保存済みなら空欄のまま"><small>キーは画面に再表示せず、Windows Credential Managerへ保存します。未対応環境ではこのサーバーの実行中だけ保持します。</small></label>
               <label class="ai-clear-key"><input id="clearOpenAIKey" type="checkbox"><span>保存済みのAPIキーを消去する</span></label>
             </div>
-            <p class="ai-settings-note">AIプロンプト作成時は概要と、選択中のタスク・長さ・解像度・音声設定（および改善時の現在プロンプト）がOpenAIへ送信されます。生成エンジンの子プロセスへAPIキーは渡しません。</p>
+            <p class="ai-settings-note">AIプロンプト作成時は概要と、選択中のタスク・長さ・解像度・音声設定（および改善時の現在プロンプト）がOpenAIへ送信されます。APIキーの登録とAI作成はサーバーPCのローカル接続からのみ実行できます。生成エンジンの子プロセスへAPIキーは渡しません。</p>
           </div>
           <aside class="settings-aside">
-            <div class="panel info-panel"><span>LOCAL FIRST</span><h3>ネットワークへ公開しません</h3><p>標準では127.0.0.1だけで待ち受けます。モデルパスと生成操作はこのPC内に留まります。</p></div>
+            <div class="panel info-panel"><span>LAN READY</span><h3>LANからアクセスできます</h3><p>標準では0.0.0.0:7860で待ち受けます。認証はないため、信頼できるネットワークでのみ使用してください。</p></div>
             <div class="panel hardware-panel" id="hardwarePanel"><h3>Hardware</h3><div class="skeleton-lines"><i></i><i></i><i></i></div></div>
           </aside>
         </div>

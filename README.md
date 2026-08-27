@@ -222,12 +222,14 @@ without syncing again:
 Or start it directly:
 
 ```powershell
-.venv\Scripts\hayate.exe webui --host 127.0.0.1 --port 7860 --open-browser
+.venv\Scripts\hayate.exe webui --open-browser
 ```
 
-Open `http://127.0.0.1:7860`. The first launch discovers existing MP4 outputs
-and their HAYATE manifests. Runtime paths can then be reviewed and saved from
-the Settings screen.
+The default bind is `0.0.0.0:7860`, so open `http://127.0.0.1:7860` on the
+same PC or use the machine's LAN address from another trusted device. Use
+`--local-only` (or `--host 127.0.0.1`) when the interface must stay loopback-only.
+The first launch discovers existing MP4 outputs and their HAYATE manifests.
+Runtime paths can then be reviewed and saved from the Settings screen.
 
 Studio includes:
 
@@ -248,8 +250,9 @@ Studio includes:
 - a readable responsive desktop/mobile interface with persistent Dark/Clear
   display modes and no Node.js requirement at runtime.
 
-The safe default binds only to `127.0.0.1`. There is no authentication layer.
-Do not use `--allow-network` on an untrusted network. Uploaded images, prompts,
+The default binds to `0.0.0.0` for trusted-LAN access and there is no
+authentication layer. Use `--local-only` on an untrusted network; do not expose
+the interface to the public internet. Uploaded images, prompts,
 job history, settings, and the SQLite database remain under `data/webui/`; model
 weights are referenced in place and are not copied. The OpenAI API key is not
 stored in that directory: the Settings password field uses Windows Credential

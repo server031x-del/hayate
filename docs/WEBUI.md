@@ -93,11 +93,12 @@ WebUI generation owns GPU 0.
 
 ## Local security boundary
 
-- Default bind: `127.0.0.1:7860`; non-loopback binds require
-  `--allow-network` and remain unauthenticated.
+- Default bind: `0.0.0.0:7860` for trusted-LAN access; the interface remains
+  unauthenticated. Use `--local-only` or `--host 127.0.0.1` for loopback-only
+  operation.
 - OpenAI credential mutation and `/api/prompt-assistant` are loopback-only when
-  the server is launched with `--allow-network`; use a real authenticated,
-  encrypted reverse proxy before exposing a paid API credential to a network.
+  the server uses a non-loopback bind; use a real authenticated, encrypted
+  reverse proxy before exposing a paid API credential to a network.
 - No CORS is enabled. Mutating API calls require the HAYATE UI header and a
   same-origin request. Trusted hosts and a restrictive Content Security Policy
   are applied.

@@ -9,6 +9,16 @@ from hayate.cli.main import build_parser, main, run_generate
 from .helpers import write_dummy_safetensors
 
 
+def test_webui_defaults_to_lan_bind_with_loopback_opt_out():
+    args = build_parser().parse_args(["webui"])
+    assert args.host == "0.0.0.0"
+    assert args.allow_network is True
+    assert args.local_only is False
+
+    local = build_parser().parse_args(["webui", "--local-only"])
+    assert local.local_only is True
+
+
 def test_cli_startup_and_inspect(tmp_path, capsys):
     model = write_dummy_safetensors(tmp_path / "audio.safetensors", [("weight", "F32", [2])], {})
     config = tmp_path / "models.yaml"

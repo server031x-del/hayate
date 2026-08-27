@@ -9,5 +9,5 @@ if not exist ".venv\Scripts\hayate.exe" (
   exit /b 1
 )
 
-".venv\Scripts\hayate.exe" webui --host 127.0.0.1 --port 7860 --open-browser
+".venv\Scripts\hayate.exe" webui --host 0.0.0.0 --port 7860 --open-browser --allow-network
 if errorlevel 1 pause
