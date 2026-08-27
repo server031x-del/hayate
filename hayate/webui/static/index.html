@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260827-library-delete">
+  <link rel="stylesheet" href="/assets/app.css?v=20260827-openai">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -118,7 +118,7 @@
             <div class="prompt-box">
               <textarea id="prompt" name="prompt" maxlength="12000" required aria-label="生成プロンプト" placeholder="映像の被写体、動き、カメラ、光、音を自由に描写してください…">A premium cinematic commercial for a sleek metallic silver sports car. The same car accelerates along a coastal highway at golden hour, dynamic tracking shots, close-ups of LED headlights and aerodynamic bodywork, then a final hero shot in a modern city plaza. Realistic motion, synchronized engine sound and cinematic music, no text, no logo, no watermark.</textarea>
               <div class="prompt-tools">
-                <button type="button" class="text-button prompt-assist-button" id="structurePrompt">H3向けプロンプト案</button>
+                <button type="button" class="text-button prompt-assist-button" id="structurePrompt">AIでH3プロンプトを作成</button>
                 <button type="button" class="text-button" data-prompt-chip="[Shot 1] ">＋ ショット</button>
                 <button type="button" class="text-button" data-prompt-chip="overall_soundscape: ">＋ 音響</button>
                 <button type="button" class="text-button" data-prompt-chip="non_diegetic_music: ">＋ 音楽</button>
@@ -255,6 +255,14 @@
               <label><span>PDD Acc 8-Step checkpoint</span><div><input id="settingPddCheckpoint" type="text"><i data-ready="pdd_checkpoint_path"></i></div><small>Alibaba PAI FL2VA Acc 8-Step</small></label>
               <label><span>PDD AdaLN affine map</span><div><input id="settingPddAffine" type="text"><i data-ready="pdd_adaln_affine_path"></i></div><small>released 2688次元をpruned 8次元へ投影</small></label>
             </div>
+            <div class="divider"></div>
+            <div class="section-heading compact"><div><span class="step-number">B</span><h2>AI prompt director</h2></div><span class="counter" id="openaiKeyStatus">未設定</span></div>
+            <div class="ai-settings-fields">
+              <label><span>OpenAI model ID</span><input id="settingOpenAIModel" type="text" autocomplete="off" placeholder="gpt-5.6-terra"><small>標準は品質と費用のバランスが良い gpt-5.6-terra。任意の対応モデルIDへ変更できます。</small></label>
+              <label><span>OpenAI API key</span><input id="settingOpenAIKey" type="password" autocomplete="new-password" placeholder="保存済みなら空欄のまま"><small>キーは画面に再表示せず、Windows Credential Managerへ保存します。未対応環境ではこのサーバーの実行中だけ保持します。</small></label>
+              <label class="ai-clear-key"><input id="clearOpenAIKey" type="checkbox"><span>保存済みのAPIキーを消去する</span></label>
+            </div>
+            <p class="ai-settings-note">AIプロンプト作成時は概要と、選択中のタスク・長さ・解像度・音声設定（および改善時の現在プロンプト）がOpenAIへ送信されます。生成エンジンの子プロセスへAPIキーは渡しません。</p>
           </div>
           <aside class="settings-aside">
             <div class="panel info-panel"><span>LOCAL FIRST</span><h3>ネットワークへ公開しません</h3><p>標準では127.0.0.1だけで待ち受けます。モデルパスと生成操作はこのPC内に留まります。</p></div>
@@ -289,7 +297,16 @@
         <div><span>H3 PROMPT ASSIST</span><h2 id="promptDialogTitle">H3向けプロンプト案を作成</h2></div>
         <button value="cancel" class="dialog-close prompt-dialog-close" aria-label="閉じる">×</button>
       </div>
-      <p class="prompt-dialog-warning">未指定の演出は追加しません。映像・音・音楽を入力し、実際にモデルへ渡す内容を確認してから適用してください。</p>
+      <p class="prompt-dialog-warning">AIはMiniMax H3向けの英語プロンプトを構造化して提案します。OpenAI APIキーは設定画面から登録し、内容を確認してから適用してください。</p>
+      <div class="prompt-ai-controls">
+        <label><span>AIに伝える映像の概要</span><textarea id="promptBrief" required placeholder="例: 雨上がりの東京を走る銀色のスポーツカーの10秒CM。最後に夜景の中で静止する。"></textarea></label>
+        <div class="prompt-ai-options">
+          <label><span>タスク</span><select id="promptTask"><option value="auto">Auto</option><option value="t2va">T2V + Audio</option><option value="fl2va">I2V / FL2V</option><option value="ref2va">Reference</option></select></label>
+          <label class="prompt-ai-audio"><input id="promptIncludeAudio" type="checkbox" checked><span>音響・音楽も設計</span></label>
+          <button type="button" class="primary-button small" id="generateAIPrompt">AIで作成</button>
+        </div>
+        <p class="prompt-ai-status" id="promptAIStatus" role="status"></p>
+      </div>
       <div class="prompt-assist-grid">
         <div class="prompt-assist-fields">
           <label><span>映像・動作・カメラ</span><textarea id="promptVisual" required></textarea></label>
@@ -298,7 +315,8 @@
         </div>
         <label class="prompt-draft"><span>適用前プレビュー</span><textarea id="promptDraft" readonly></textarea></label>
       </div>
-      <small class="prompt-dialog-note">公式推奨では3セクションを英語で記述し、台詞・歌詞・画面文字は原文を保持します。この補助機能は翻訳や内容の創作を行いません。</small>
+      <div class="prompt-ai-result" id="promptAIResult" hidden><span>AI案の構造</span><p id="promptAIResultText"></p></div>
+      <small class="prompt-dialog-note">AI案は英語の integrated_multimodal_description / overall_soundscape / non_diegetic_music を含みます。手動編集も可能で、「この案を適用」を押すまで現在のプロンプトは変更されません。</small>
       <div class="prompt-dialog-actions">
         <button value="cancel" class="secondary-button">キャンセル</button>
         <button type="button" class="primary-button small" id="applyStructuredPrompt">この案を適用</button>
@@ -306,6 +324,6 @@
     </form>
   </dialog>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/assets/app.js?v=20260827-pdd" defer></script>
+  <script src="/assets/app.js?v=20260827-openai" defer></script>
 </body>
 </html>

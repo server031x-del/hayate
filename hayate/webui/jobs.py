@@ -446,6 +446,11 @@ class JobManager:
         log_path, _ = generation_artifact_paths(output)
         environment = os.environ.copy()
         environment.update(plan.environment)
+        # The OpenAI prompt-authoring credential belongs to the WebUI process
+        # only.  Never inherit it into the separate MiniMax H3 generation
+        # process, whose logs and third-party runtime are unrelated to AI
+        # authoring.
+        environment.pop("OPENAI_API_KEY", None)
         environment["PYTHONIOENCODING"] = "utf-8"
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         started = 0.0

@@ -46,6 +46,8 @@ generation = [
 ]
 webui = [
   "fastapi>=0.116,<1",
+  "keyring>=25,<26",
+  "openai>=1.109.1,<2",
   "pillow>=11,<13",
   "python-multipart>=0.0.20,<1",
   "uvicorn>=0.35,<1",

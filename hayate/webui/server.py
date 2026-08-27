@@ -16,11 +16,20 @@ from urllib.parse import urlsplit
 
 import psutil
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from hayate.ai.openai_prompt import (
+    H3PromptResult,
+    MiniMaxH3PromptAssistant,
+    OpenAIClientConfig,
+    PromptAssistantError,
+    PromptRequest,
+)
 from hayate import __version__
 from hayate.backends.minimax_h3 import ExternalH3GenerationBackend, GenerationRequest
 from hayate.backends.minimax_h3.generation import generation_artifact_paths
@@ -29,6 +38,11 @@ from hayate.models import ModelRegistry
 from hayate.profiles import get_generation_profile
 from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
+from hayate.webui.openai_settings import (
+    DEFAULT_OPENAI_MODEL,
+    OpenAISettingsStore,
+    validate_model,
+)
 from hayate.webui.settings import SettingsStore, WebUISettings
 
 PROFILE_NAMES = (
@@ -59,6 +73,34 @@ class SettingsPayload(BaseModel):
     prompt_cache_dir: str
     pdd_checkpoint_path: str
     pdd_adaln_affine_path: str
+    openai_model: str = Field(default=DEFAULT_OPENAI_MODEL, min_length=1, max_length=128)
+    # ``None`` means keep the current credential.  A non-empty value replaces
+    # it; clearing is an explicit, separate operation.
+    openai_api_key: str | None = Field(default=None, max_length=512)
+    clear_openai_api_key: bool = False
+
+    @field_validator("openai_model")
+    @classmethod
+    def valid_openai_model(cls, value: str) -> str:
+        return validate_model(value)
+
+
+class PromptAssistantPayload(BaseModel):
+    brief: str = Field(min_length=1, max_length=4000)
+    task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
+    duration_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    width: int = Field(default=512, ge=256, le=1536)
+    height: int = Field(default=512, ge=256, le=1536)
+    include_audio: bool = True
+    language: Literal["ja", "en"] = "ja"
+    current_prompt: str | None = Field(default=None, max_length=12000)
+
+    @field_validator("width", "height")
+    @classmethod
+    def multiple_of_32(cls, value: int) -> int:
+        if value % 32:
+            raise ValueError("must be a multiple of 32")
+        return value
 
 
 class GenerationPayload(BaseModel):
@@ -195,12 +237,16 @@ def create_app(
     workspace: Path | None = None,
     *,
     job_manager: JobManager | None = None,
+    openai_store: OpenAISettingsStore | None = None,
     trusted_hosts: list[str] | None = None,
 ) -> FastAPI:
     root = (workspace or Path.cwd()).resolve(strict=False)
     data_dir = root / "data" / "webui"
     static_dir = Path(__file__).resolve().parent / "static"
     settings_store = SettingsStore(data_dir / "settings.json", root)
+    openai_settings_store = openai_store or OpenAISettingsStore(
+        data_dir / "openai-settings.json"
+    )
     instance_lease = GPULease(
         data_dir / "webui-server.lock",
         owner={"pid": os.getpid(), "kind": "webui-server"},
@@ -245,14 +291,32 @@ def create_app(
     )
     app.state.workspace = root
     app.state.settings_store = settings_store
+    app.state.openai_settings_store = openai_settings_store
     app.state.job_store = store
     app.state.job_manager = manager
+    app.state.network_exposed = trusted_hosts == ["*"]
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=trusted_hosts
         or ["127.0.0.1", "localhost", "[::1]", "testserver"],
     )
     app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        """Keep credential values out of FastAPI's default 422 echo."""
+
+        errors = []
+        for error in exc.errors():
+            safe_error = dict(error)
+            location = tuple(error.get("loc", ()))
+            if "openai_api_key" in location:
+                safe_error.pop("input", None)
+            errors.append(safe_error)
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(errors)},
+        )
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -310,6 +374,18 @@ def create_app(
             candidate = root / candidate
         return candidate.resolve(strict=False)
 
+    def ensure_local_secret_action(request: Request) -> None:
+        """Do not expose credential mutation or paid AI calls over LAN."""
+
+        if not app.state.network_exposed:
+            return
+        client_host = request.client.host if request.client else ""
+        if client_host not in {"127.0.0.1", "::1", "localhost"}:
+            raise HTTPException(
+                403,
+                "OpenAIの設定とAIプロンプト作成はローカル接続でのみ利用できます",
+            )
+
     def with_media_availability(job: dict) -> dict:
         enriched = dict(job)
         raw_path = enriched.get("output_path") or ""
@@ -333,6 +409,7 @@ def create_app(
             "version": __version__,
             "settings": current.to_dict(),
             "readiness": SettingsStore.readiness(current),
+            "openai": openai_settings_store.public_dict(),
             "hardware": hardware,
             "jobs": [with_media_availability(job) for job in store.list(100)],
             "profiles": {
@@ -359,18 +436,87 @@ def create_app(
         return {
             "settings": current.to_dict(),
             "readiness": SettingsStore.readiness(current),
+            "openai": openai_settings_store.public_dict(),
         }
 
     @app.put("/api/settings")
-    async def put_settings(payload: SettingsPayload):
-        current = settings_store.save(WebUISettings(**payload.model_dump()))
+    async def put_settings(payload: SettingsPayload, request: Request):
+        openai_current = openai_settings_store.load()
+        openai_changed = payload.openai_model != openai_current.model
+        if payload.openai_api_key or payload.clear_openai_api_key or openai_changed:
+            ensure_local_secret_action(request)
+        if payload.clear_openai_api_key and payload.openai_api_key:
+            raise HTTPException(
+                422, "APIキーの入力と消去は同時に指定できません"
+            )
+        runtime_keys = {
+            "config_path",
+            "upstream_path",
+            "checkpoint_dir",
+            "output_dir",
+            "python_path",
+            "prompt_cache_dir",
+            "pdd_checkpoint_path",
+            "pdd_adaln_affine_path",
+        }
+        current = settings_store.save(
+            WebUISettings(**payload.model_dump(include=runtime_keys))
+        )
+        if payload.clear_openai_api_key:
+            if not openai_settings_store.clear_api_key():
+                raise HTTPException(
+                    502,
+                    {
+                        "code": "openai_key_clear_failed",
+                        "message": "OpenAI APIキーをCredential Managerから消去できませんでした。状態を確認して再試行してください。",
+                    },
+                )
+        elif payload.openai_api_key and payload.openai_api_key.strip():
+            openai_settings_store.set_api_key(payload.openai_api_key)
+        openai_settings_store.update(model=payload.openai_model)
         Path(current.output_dir).mkdir(parents=True, exist_ok=True)
         Path(current.prompt_cache_dir).mkdir(parents=True, exist_ok=True)
         store.import_outputs(Path(current.output_dir))
         return {
             "settings": current.to_dict(),
             "readiness": SettingsStore.readiness(current),
+            "openai": openai_settings_store.public_dict(),
         }
+
+    @app.post("/api/prompt-assistant", response_model=H3PromptResult)
+    async def prompt_assistant(payload: PromptAssistantPayload, request: Request):
+        ensure_local_secret_action(request)
+        openai_settings = openai_settings_store.load()
+        api_key, _source = openai_settings_store.credentials()
+        if not api_key:
+            raise HTTPException(
+                409,
+                {
+                    "code": "openai_key_missing",
+                    "message": "設定画面でOpenAI APIキーを登録してください。",
+                },
+            )
+        assistant = MiniMaxH3PromptAssistant(
+            OpenAIClientConfig(
+                model=openai_settings.model,
+                api_key=api_key,
+            )
+        )
+        request_data = PromptRequest(
+            brief=payload.brief,
+            task=payload.task,
+            duration_seconds=payload.duration_seconds,
+            width=payload.width,
+            height=payload.height,
+            include_audio=payload.include_audio,
+            language=payload.language,
+            current_prompt=payload.current_prompt or "",
+        )
+        try:
+            return await asyncio.to_thread(assistant.generate, request_data)
+        except PromptAssistantError as exc:
+            status = 409 if exc.code == "openai_key_missing" else 502
+            raise HTTPException(status, {"code": exc.code, "message": exc.message}) from exc
 
     @app.post("/api/assets")
     async def upload_asset(file: Annotated[UploadFile, File()]):

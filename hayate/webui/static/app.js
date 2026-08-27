@@ -12,6 +12,7 @@ const state = {
   resourceTimer: null,
   elapsedTimer: null,
   promptTransform: null,
+  promptAI: null,
   dialogJobId: null,
   deleteJobId: null,
   deleteDialogTrigger: null,
@@ -249,9 +250,72 @@ function structuredPromptDraft() {
   return { draft, visual, sound, music };
 }
 
+function setPromptAIStatus(message = "", kind = "") {
+  const status = $("#promptAIStatus");
+  status.textContent = message;
+  status.classList.toggle("error", kind === "error");
+}
+
+function renderPromptAIResult(result) {
+  const details = [
+    `被写体: ${result.subject}`,
+    `動作: ${result.action}`,
+    `環境: ${result.environment}`,
+    `カメラ: ${result.camera}`,
+    `光・質感: ${result.lighting}`,
+    `スタイル: ${result.style}`,
+    `環境音・同期音: ${result.soundscape}`,
+    `背景音楽: ${result.music}`,
+    `ネガティブ確認: ${result.negative}`,
+  ].join("\n");
+  $("#promptAIResultText").textContent = details;
+  $("#promptAIResult").hidden = false;
+  $("#promptDraft").value = result.final_prompt;
+}
+
+async function generateAIPrompt() {
+  const brief = $("#promptBrief").value.trim();
+  if (!brief) return setPromptAIStatus("映像の概要を入力してください", "error");
+  const [width, height] = resolution();
+  const button = $("#generateAIPrompt");
+  button.disabled = true;
+  setPromptAIStatus("OpenAIでH3向け構成を作成中…");
+  try {
+    const result = await api("/api/prompt-assistant", {
+      method: "POST",
+      body: {
+        brief,
+        task: $("#promptTask").value,
+        duration_seconds: state.duration,
+        width,
+        height,
+        include_audio: $("#promptIncludeAudio").checked,
+        language: "ja",
+        current_prompt: state.promptTransform?.original || $("#prompt").value.trim(),
+      },
+    });
+    state.promptAI = result;
+    $("#promptVisual").value = `${result.subject}. ${result.action}. ${result.environment}. ${result.camera}. ${result.lighting}. ${result.style}.`;
+    $("#promptSound").value = result.soundscape;
+    $("#promptMusic").value = $("#promptIncludeAudio").checked ? result.music : "N/A";
+    renderPromptAIResult(result);
+    setPromptAIStatus(`AI案を作成しました（${state.bootstrap?.openai?.model || "OpenAI"}）。内容を確認して適用してください。`);
+    toast("MiniMax H3向けAIプロンプト案を作成しました");
+  } catch (error) {
+    setPromptAIStatus(error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function openPromptAssist() {
   const original = state.promptTransform?.original || $("#prompt").value.trim();
-  if (!original) return toast("先に映像の内容を入力してください", "error");
+  state.promptAI = null;
+  $("#promptBrief").value = original;
+  $("#promptTask").value = $("#task").value;
+  $("#promptIncludeAudio").checked = true;
+  $("#promptAIResult").hidden = true;
+  setPromptAIStatus("");
   $("#promptVisual").value = original;
   $("#promptSound").value = "";
   $("#promptMusic").value = "";
@@ -261,7 +325,12 @@ function openPromptAssist() {
 }
 
 function applyStructuredPrompt() {
-  const { draft, visual, sound, music } = structuredPromptDraft();
+  const aiDraft = state.promptAI?.final_prompt || "";
+  const keepAIDraft = Boolean(aiDraft && $("#promptDraft").value === aiDraft);
+  const structured = keepAIDraft
+    ? { draft: aiDraft, visual: $("#promptVisual").value.trim(), sound: $("#promptSound").value.trim(), music: $("#promptMusic").value.trim() }
+    : structuredPromptDraft();
+  const { draft, visual, sound, music } = structured;
   if (!visual || !sound || !music) {
     return toast(
       "映像・環境音・背景音楽をすべて入力してください。不要な項目は N/A と入力できます",
@@ -529,7 +598,7 @@ async function stopActive(save) {
   } catch (error) { toast(error.message, "error"); }
 }
 
-function renderSettings(settings, readiness) {
+function renderSettings(settings, readiness, openai = state.bootstrap?.openai) {
   $("#settingConfig").value = settings.config_path || "";
   $("#settingUpstream").value = settings.upstream_path || "";
   $("#settingCheckpoint").value = settings.checkpoint_dir || "";
@@ -538,6 +607,15 @@ function renderSettings(settings, readiness) {
   $("#settingCache").value = settings.prompt_cache_dir || "";
   $("#settingPddCheckpoint").value = settings.pdd_checkpoint_path || "";
   $("#settingPddAffine").value = settings.pdd_adaln_affine_path || "";
+  $("#settingOpenAIModel").value = openai?.model || "gpt-5.6-terra";
+  // Never hydrate a secret back into the DOM.  The status only exposes the
+  // configured/source state returned by the server.
+  $("#settingOpenAIKey").value = "";
+  $("#clearOpenAIKey").checked = false;
+  const sourceLabels = { keyring: "Credential Manager", session: "この起動中", environment: "環境変数" };
+  $("#openaiKeyStatus").textContent = openai?.api_key_configured
+    ? `設定済み · ${sourceLabels[openai.api_key_source] || "保存済み"}`
+    : "未設定";
   $$('[data-ready]').forEach((dot) => dot.classList.toggle("ready", Boolean(readiness?.[dot.dataset.ready]?.ready)));
   const ready = Object.values(readiness || {}).every((item) => item.ready);
   $("#engineState").textContent = ready ? "ENGINE READY" : "設定を確認";
@@ -554,10 +632,14 @@ async function saveSettings() {
     prompt_cache_dir: $("#settingCache").value.trim(),
     pdd_checkpoint_path: $("#settingPddCheckpoint").value.trim(),
     pdd_adaln_affine_path: $("#settingPddAffine").value.trim(),
+    openai_model: $("#settingOpenAIModel").value.trim(),
+    openai_api_key: $("#settingOpenAIKey").value.trim() || null,
+    clear_openai_api_key: $("#clearOpenAIKey").checked,
   };
   try {
     const result = await api("/api/settings", { method: "PUT", body: payload });
-    renderSettings(result.settings, result.readiness);
+    if (state.bootstrap) state.bootstrap.openai = result.openai;
+    renderSettings(result.settings, result.readiness, result.openai);
     toast("エンジン設定を保存しました");
   } catch (error) { toast(error.message, "error"); }
 }
@@ -596,6 +678,7 @@ function bindEvents() {
     $(selector).addEventListener("input", structuredPromptDraft);
   });
   $("#applyStructuredPrompt").addEventListener("click", applyStructuredPrompt);
+  $("#generateAIPrompt").addEventListener("click", generateAIPrompt);
   $("#promptDialog").addEventListener("close", () => {
     state.dialogTrigger?.focus?.();
     state.dialogTrigger = null;
@@ -688,7 +771,7 @@ async function initialize() {
     state.jobs = bootstrap.jobs || [];
     applyProfile(selectedProfile());
     $("#version").textContent = bootstrap.version;
-    renderSettings(bootstrap.settings, bootstrap.readiness);
+    renderSettings(bootstrap.settings, bootstrap.readiness, bootstrap.openai);
     renderHardware(bootstrap.hardware);
     renderJobs();
     const live = state.jobs.find((job) => ["running", "stopping", "cancelling", "queued"].includes(job.status));

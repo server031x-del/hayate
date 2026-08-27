@@ -238,7 +238,8 @@ Studio includes:
   cache, EasyCache, block swap, activation chunking, and VAE controls;
 - an explicit MiniMax H3 prompt assistant that previews and applies structured
   visual/action/camera, sound, and music fields without silently rewriting the
-  user's prompt;
+  user's prompt, plus optional OpenAI Responses API authoring with a
+  configurable model;
 - a single-GPU FIFO queue with a cross-process lease shared with the CLI;
 - structured `HAYATE_EVENT` progress, stage timeline, ETA, VRAM/RAM status,
   persisted job logs, safe stop-and-save, and immediate cancellation;
@@ -250,7 +251,9 @@ Studio includes:
 The safe default binds only to `127.0.0.1`. There is no authentication layer.
 Do not use `--allow-network` on an untrusted network. Uploaded images, prompts,
 job history, settings, and the SQLite database remain under `data/webui/`; model
-weights are referenced in place and are not copied.
+weights are referenced in place and are not copied. The OpenAI API key is not
+stored in that directory: the Settings password field uses Windows Credential
+Manager through `keyring` when available, with an in-process-only fallback.
 
 ## v0.1 capabilities
 
