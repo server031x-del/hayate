@@ -33,6 +33,7 @@ def test_web_profiles_use_shared_validated_values():
     detail = _profile_values(
         GenerationPayload(prompt="test", profile="fast_sage_detail")
     )
+    pdd = _profile_values(GenerationPayload(prompt="test", profile="pdd"))
     assert quality["steps"] == 50
     assert quality["attention_backend"] == "sdpa"
     assert quality["easycache"] is False
@@ -45,6 +46,10 @@ def test_web_profiles_use_shared_validated_values():
     assert detail["easycache_end"] == 0.85
     assert detail["easycache_max_consecutive_skips"] == 2
     assert detail["vae_tile_size"] == 256
+    assert pdd["steps"] == 9
+    assert pdd["pdd"] is True
+    assert pdd["easycache"] is False
+    assert pdd["attention_backend"] == "sdpa"
 
 
 def test_prompt_transform_metadata_is_explicit_and_optional():
@@ -106,10 +111,10 @@ def test_webui_static_shell_and_mutation_security(tmp_path):
         response = client.get("/")
         assert response.status_code == 200
         assert "HAYATE Studio" in response.text
-        assert "app.js?v=20260827-library-delete" in response.text
+        assert "app.js?v=20260827-pdd" in response.text
         assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
 
-        asset = client.get("/assets/app.js?v=20260827-library-delete")
+        asset = client.get("/assets/app.js?v=20260827-pdd")
         assert asset.status_code == 200
         assert asset.headers["cache-control"] == "no-store"
 

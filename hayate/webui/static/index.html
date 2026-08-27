@@ -88,6 +88,12 @@
                 <em>推奨</em>
               </label>
               <label class="profile-card">
+                <input type="radio" name="profile" value="pdd">
+                <span class="profile-icon pdd">P8</span>
+                <span><b>PDD 8-Step</b><small>蒸留8回評価・要品質比較</small></span>
+                <em>NEW</em>
+              </label>
+              <label class="profile-card">
                 <input type="radio" name="profile" value="fast">
                 <span class="profile-icon balance">F</span>
                 <span><b>Fast SDPA</b><small>高い再現性</small></span>
@@ -179,6 +185,10 @@
                     <label><span>Max skips</span><input id="ecSkips" type="number" min="1" max="20" value="2"></label>
                   </div>
                 </div>
+                <div class="easycache-box pdd-box">
+                  <div class="easycache-head"><div><b>PDD Acc 8-Step</b><small>蒸留された8回評価経路。EasyCacheとは排他</small></div><label class="switch"><input id="pdd" type="checkbox"><i></i></label></div>
+                  <p>FL2VA PDDヘッドとLoRAをW4A8本体へ非破壊で追加します。pruned AdaLNは公開affine mapで投影します。短尺はSDPAを使用してください。</p>
+                </div>
               </div>
             </details>
 
@@ -242,6 +252,8 @@
               <label><span>Output directory</span><div><input id="settingOutput" type="text"><i data-ready="output_dir"></i></div></label>
               <label><span>Python executable</span><div><input id="settingPython" type="text"><i data-ready="python_path"></i></div></label>
               <label><span>Prompt cache directory</span><div><input id="settingCache" type="text"><i data-ready="prompt_cache_dir"></i></div></label>
+              <label><span>PDD Acc 8-Step checkpoint</span><div><input id="settingPddCheckpoint" type="text"><i data-ready="pdd_checkpoint_path"></i></div><small>Alibaba PAI FL2VA Acc 8-Step</small></label>
+              <label><span>PDD AdaLN affine map</span><div><input id="settingPddAffine" type="text"><i data-ready="pdd_adaln_affine_path"></i></div><small>released 2688次元をpruned 8次元へ投影</small></label>
             </div>
           </div>
           <aside class="settings-aside">
@@ -294,6 +306,6 @@
     </form>
   </dialog>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/assets/app.js?v=20260827-library-delete" defer></script>
+  <script src="/assets/app.js?v=20260827-pdd" defer></script>
 </body>
 </html>

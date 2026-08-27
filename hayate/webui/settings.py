@@ -16,6 +16,8 @@ class WebUISettings:
     output_dir: str
     python_path: str
     prompt_cache_dir: str
+    pdd_checkpoint_path: str
+    pdd_adaln_affine_path: str
 
     @classmethod
     def defaults(cls, workspace: Path) -> WebUISettings:
@@ -30,6 +32,10 @@ class WebUISettings:
             output_dir=str(workspace / "outputs"),
             python_path=str(Path(sys.executable).resolve(strict=False)),
             prompt_cache_dir=str(workspace / "outputs" / "prompt_cache"),
+            pdd_checkpoint_path=str(
+                workspace / "models" / "lora" / "MiniMax-H3-FL2VA-Acc-8Step.safetensors"
+            ),
+            pdd_adaln_affine_path=str(workspace / "models" / "lora" / "adaln_affine.safetensors"),
         )
 
     def to_dict(self) -> dict[str, str]:
@@ -91,6 +97,8 @@ class SettingsStore:
             "output_dir": (Path(settings.output_dir).is_dir(), "directory"),
             "python_path": (Path(settings.python_path).is_file(), "file"),
             "prompt_cache_dir": (Path(settings.prompt_cache_dir).is_dir(), "directory"),
+            "pdd_checkpoint_path": (Path(settings.pdd_checkpoint_path).is_file(), "file"),
+            "pdd_adaln_affine_path": (Path(settings.pdd_adaln_affine_path).is_file(), "file"),
         }
         return {
             key: {"ready": ready, "expected": expected, "value": getattr(settings, key)}

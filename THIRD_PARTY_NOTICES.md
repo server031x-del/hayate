@@ -29,6 +29,19 @@ integration based on the algorithm published by
 [`H-EmbodVis/EasyCache`](https://github.com/H-EmbodVis/EasyCache), licensed
 under Apache-2.0. HAYATE does not copy ComfyUI's GPL EasyCache integration.
 
+HAYATE's optional PDD acceleration mode interoperates with
+[`alibaba-pai/MiniMax-H3-Acc-LoRAs`](https://huggingface.co/alibaba-pai/MiniMax-H3-Acc-LoRAs).
+That repository declares Apache-2.0 in its model-card metadata; a top-level
+license file was not present when inspected on 2026-08-27. HAYATE does not copy
+its Python helper and independently implements the published PDD schedule and
+checkpoint contract. Projection of released 2688-wide AdaLN adapters onto the
+pruned 8-wide coordinates follows the mathematical identity and external data
+described by
+[`multimodalart/MiniMax-H3-Pruned`](https://huggingface.co/multimodalart/MiniMax-H3-Pruned).
+The affine map and PDD/model weights are downloaded separately and retain their
+source terms, including the MiniMax-H3 Community License Agreement where
+applicable.
+
 The optional Windows SageAttention profile uses
 [`woct0rdho/SageAttention`](https://github.com/woct0rdho/SageAttention) 2.2.0
 post4, derived from [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention),

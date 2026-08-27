@@ -18,6 +18,7 @@ class GenerationProfile:
     activation_chunk_rows: int = 32768
     vae_tile_size: int = 256
     approximate: bool = False
+    pdd: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -53,6 +54,32 @@ GENERATION_PROFILES = {
         0.85,
         2,
         approximate=True,
+    ),
+    "pdd_sage": GenerationProfile(
+        "pdd_sage",
+        "PDD Acc 8-Step + Sage",
+        9,
+        "sageattn",
+        False,
+        0.4,
+        0.15,
+        0.95,
+        2,
+        approximate=True,
+        pdd=True,
+    ),
+    "pdd": GenerationProfile(
+        "pdd",
+        "PDD Acc 8-Step",
+        9,
+        "sdpa",
+        False,
+        0.4,
+        0.15,
+        0.95,
+        2,
+        approximate=True,
+        pdd=True,
     ),
 }
 

@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Callable
 
 from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter, UpstreamValidation
+from hayate.backends.minimax_h3.pdd import (
+    PDDCheckpointConfig,
+    validate_adaln_affine,
+    validate_pruned_adaln_coordinates,
+)
 from hayate.backends.minimax_h3.vae_tiling import validate_vae_tile_size
 from hayate.errors import GenerationPreflightError
 from hayate.loaders.base import LoaderStatus
@@ -17,6 +22,11 @@ from hayate.loaders.factory import LoaderFactory
 from hayate.models import ModelRegistry
 from hayate.models.types import ModelRole
 from hayate.runtime.gpu_lease import GPULease
+
+
+def _aligned_h3_frames(frames: int) -> int:
+    """Return the upstream video-VAE frame count (17*n + 5) for a request."""
+    return frames + ((5 - frames) % 17)
 
 
 @dataclass(frozen=True)
@@ -43,6 +53,8 @@ class GenerationRequest:
     easycache_max_consecutive_skips: int = 2
     vae_tile_size: int = 256
     attention_backend: str = "sdpa"
+    pdd_checkpoint: Path | None = None
+    pdd_adaln_affine: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +102,16 @@ class GenerationPlan:
                 "easycache_max_consecutive_skips": self.request.easycache_max_consecutive_skips,
                 "vae_tile_size": self.request.vae_tile_size,
                 "attention_backend": self.request.attention_backend,
+                "pdd_checkpoint": (
+                    str(self.request.pdd_checkpoint.resolve(strict=False))
+                    if self.request.pdd_checkpoint is not None
+                    else None
+                ),
+                "pdd_adaln_affine": (
+                    str(self.request.pdd_adaln_affine.resolve(strict=False))
+                    if self.request.pdd_adaln_affine is not None
+                    else None
+                ),
             },
         }
 
@@ -250,6 +272,19 @@ class ExternalH3GenerationBackend:
             issues.append(str(exc))
         if request.attention_backend not in {"sdpa", "sageattn"}:
             issues.append(f"unsupported attention backend: {request.attention_backend}")
+        if request.pdd_checkpoint is not None and request.easycache:
+            issues.append("PDD and EasyCache are mutually exclusive; select only one acceleration mode")
+        if request.pdd_checkpoint is not None and request.task == "ref2va":
+            issues.append("the FL2VA PDD checkpoint cannot be used with ref2va")
+        if (
+            request.pdd_checkpoint is not None
+            and request.attention_backend == "sageattn"
+            and _aligned_h3_frames(request.frames) < 243
+        ):
+            issues.append(
+                "PDD with SageAttention is disabled below 243 frames on the validated "
+                "RTX 3060 path because short clips can produce non-finite latents; select SDPA"
+            )
         for label, path in (
             ("first image", request.image_path),
             ("last image", request.last_image_path),
@@ -301,6 +336,44 @@ class ExternalH3GenerationBackend:
                     f"{validation.reason}"
                 )
 
+        if request.pdd_checkpoint is not None:
+            try:
+                pdd_config = PDDCheckpointConfig.inspect(request.pdd_checkpoint)
+            except Exception as exc:
+                issues.append(f"PDD checkpoint validation failed: {exc}")
+            else:
+                required_points = pdd_config.nfe + 1
+                if request.steps != required_points:
+                    issues.append(
+                        f"PDD {pdd_config.nfe}-NFE requires {required_points} scheduler points, "
+                        f"got {request.steps}"
+                    )
+                transformer_path = model_paths.get(ModelRole.TRANSFORMER)
+                if transformer_path is not None and transformer_path.is_file():
+                    try:
+                        from hayate.models.safetensors_header import read_safetensors_header
+
+                        transformer_names = {
+                            tensor.name for tensor in read_safetensors_header(transformer_path).tensors
+                        }
+                        if "adaln_t_table" in transformer_names:
+                            if request.pdd_adaln_affine is None:
+                                issues.append(
+                                    "PDD with the pruned transformer requires pdd_adaln_affine"
+                                )
+                            elif not request.pdd_adaln_affine.is_file():
+                                issues.append(
+                                    f"PDD AdaLN affine map does not exist: {request.pdd_adaln_affine}"
+                                )
+                            else:
+                                try:
+                                    validate_pruned_adaln_coordinates(transformer_path)
+                                    validate_adaln_affine(request.pdd_adaln_affine)
+                                except Exception as exc:
+                                    issues.append(f"PDD AdaLN projection validation failed: {exc}")
+                    except Exception as exc:
+                        issues.append(f"cannot inspect transformer for PDD compatibility: {exc}")
+
         if request.steps != 50:
             warnings.append("non-default step count changes the model's quality/speed operating point")
         if request.blocks_to_swap < 40:
@@ -309,6 +382,10 @@ class ExternalH3GenerationBackend:
             warnings.append("the initial W4A8 target is FL2VA; ref2va needs its matching transformer layout")
         if request.easycache:
             warnings.append("EasyCache trades a small amount of numerical fidelity for generation speed")
+        if request.pdd_checkpoint is not None:
+            warnings.append(
+                "PDD uses a distilled 8-evaluation trajectory; compare motion and prompt fidelity against Quality"
+            )
         if request.attention_backend == "sageattn":
             warnings.append("SageAttention is approximate; compare quality against SDPA")
 
@@ -386,6 +463,19 @@ class ExternalH3GenerationBackend:
                     ),
                 }
             )
+        if request.pdd_checkpoint is not None:
+            environment["HAYATE_PDD_CHECKPOINT"] = str(
+                request.pdd_checkpoint.expanduser().resolve(strict=False)
+            )
+            # Pageable adapter storage is the validated default. Pinning can
+            # be enabled explicitly for a measured host with
+            # HAYATE_PDD_PIN_LORA=1, but must not silently change allocator
+            # behavior on consumer GPUs.
+            environment["HAYATE_PDD_PIN_LORA"] = os.environ.get("HAYATE_PDD_PIN_LORA", "0")
+            if request.pdd_adaln_affine is not None:
+                environment["HAYATE_PDD_ADALN_AFFINE"] = str(
+                    request.pdd_adaln_affine.expanduser().resolve(strict=False)
+                )
         return GenerationPlan(
             request,
             tuple(command),

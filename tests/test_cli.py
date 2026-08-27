@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hayate.cli.main import build_parser, main, run_generate
@@ -97,6 +99,42 @@ def test_rtx3060_fast_sage_profile_selects_sageattention(monkeypatch, tmp_path):
         pass
     else:
         raise AssertionError("SageAttention profile was not applied")
+
+
+def test_rtx3060_pdd_profile_uses_sdpa(monkeypatch, tmp_path):
+    args = build_parser().parse_args(
+        [
+            "generate",
+            "--prompt",
+            "test",
+            "--ckpt-dir",
+            str(tmp_path / "checkpoint"),
+            "--output",
+            str(tmp_path / "out.mp4"),
+            "--rtx3060-pdd",
+            "--dry-run",
+        ]
+    )
+
+    class StopAfterProfile(RuntimeError):
+        pass
+
+    def stop_backend(*_args, **_kwargs):
+        assert args.steps == 9
+        assert args.easycache is False
+        assert args.attention_backend == "sdpa"
+        assert args.pdd_checkpoint == Path(
+            "models/lora/MiniMax-H3-FL2VA-Acc-8Step.safetensors"
+        )
+        raise StopAfterProfile
+
+    monkeypatch.setattr("hayate.cli.main.ExternalH3GenerationBackend", stop_backend)
+    try:
+        run_generate(args, None)
+    except StopAfterProfile:
+        pass
+    else:
+        raise AssertionError("PDD SDPA profile was not applied")
 
 
 def test_rtx3060_fast_sage_detail_profile_protects_final_steps(monkeypatch, tmp_path):

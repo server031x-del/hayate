@@ -135,6 +135,7 @@ function applyProfile(profile) {
     $("#steps").value = preset.steps;
     $("#attention").value = preset.attention_backend;
     $("#easycache").checked = preset.easycache;
+    $("#pdd").checked = Boolean(preset.pdd);
     $("#ecThreshold").value = preset.easycache_threshold;
     $("#ecStart").value = preset.easycache_start;
     $("#ecEnd").value = preset.easycache_end;
@@ -151,6 +152,7 @@ function applyProfile(profile) {
 function updateProfileSummary() {
   const parts = [`${$("#steps").value} points`, $("#attention").value === "sageattn" ? "SageAttention" : "SDPA"];
   if ($("#easycache").checked) parts.push("EasyCache");
+  if ($("#pdd").checked) parts.push("PDD 8-Step");
   $("#profileSummary").textContent = parts.join(" · ");
 }
 
@@ -224,6 +226,7 @@ function generationPayload() {
     steps: Number($("#steps").value),
     attention_backend: $("#attention").value,
     easycache: $("#easycache").checked,
+    pdd: $("#pdd").checked,
     easycache_threshold: Number($("#ecThreshold").value),
     easycache_start: Number($("#ecStart").value),
     easycache_end: Number($("#ecEnd").value),
@@ -352,6 +355,8 @@ function renderLive(job) {
   $("#elapsedTime").textContent = clock(activeElapsed(job));
   $("#etaTime").textContent = job.eta_seconds === 0 ? "完了" : clock(job.eta_seconds);
   $("#liveProfile").textContent = String(job.request?.profile || "history")
+    .replace("pdd_sage", "PDD 8-Step + Sage")
+    .replace("pdd", "PDD 8-Step")
     .replace("fast_sage_detail", "高速・画質優先")
     .replace("fast_sage", "最速")
     .replace("fast", "Fast SDPA")
@@ -531,6 +536,8 @@ function renderSettings(settings, readiness) {
   $("#settingOutput").value = settings.output_dir || "";
   $("#settingPython").value = settings.python_path || "";
   $("#settingCache").value = settings.prompt_cache_dir || "";
+  $("#settingPddCheckpoint").value = settings.pdd_checkpoint_path || "";
+  $("#settingPddAffine").value = settings.pdd_adaln_affine_path || "";
   $$('[data-ready]').forEach((dot) => dot.classList.toggle("ready", Boolean(readiness?.[dot.dataset.ready]?.ready)));
   const ready = Object.values(readiness || {}).every((item) => item.ready);
   $("#engineState").textContent = ready ? "ENGINE READY" : "設定を確認";
@@ -545,6 +552,8 @@ async function saveSettings() {
     output_dir: $("#settingOutput").value.trim(),
     python_path: $("#settingPython").value.trim(),
     prompt_cache_dir: $("#settingCache").value.trim(),
+    pdd_checkpoint_path: $("#settingPddCheckpoint").value.trim(),
+    pdd_adaln_affine_path: $("#settingPddAffine").value.trim(),
   };
   try {
     const result = await api("/api/settings", { method: "PUT", body: payload });
@@ -600,13 +609,24 @@ function bindEvents() {
     applyProfile(radio.value);
     if (radio.value === "custom") $("#advancedSettings").open = true;
   }));
-  ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
+  ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "pdd", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
     $(`#${id}`).addEventListener("change", () => {
       const custom = $('input[name="profile"][value="custom"]');
       custom.checked = true;
       $$(".profile-card").forEach((card) => card.classList.toggle("selected", card.contains(custom)));
       updateProfileSummary();
     });
+  });
+  $("#easycache").addEventListener("change", () => {
+    if ($("#easycache").checked) $("#pdd").checked = false;
+    updateProfileSummary();
+  });
+  $("#pdd").addEventListener("change", () => {
+    if ($("#pdd").checked) {
+      $("#easycache").checked = false;
+      $("#steps").value = 9;
+    }
+    updateProfileSummary();
   });
   $$("#durationControl button").forEach((button) => button.addEventListener("click", () => {
     $$("#durationControl button").forEach((item) => item.classList.toggle("active", item === button));

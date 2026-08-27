@@ -31,7 +31,15 @@ from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
 from hayate.webui.settings import SettingsStore, WebUISettings
 
-PROFILE_NAMES = ("quality", "fast", "fast_sage", "fast_sage_detail", "custom")
+PROFILE_NAMES = (
+    "quality",
+    "fast",
+    "fast_sage",
+    "fast_sage_detail",
+    "pdd",
+    "pdd_sage",
+    "custom",
+)
 ASSET_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 IMAGE_SIGNATURES = {
@@ -49,6 +57,8 @@ class SettingsPayload(BaseModel):
     output_dir: str
     python_path: str
     prompt_cache_dir: str
+    pdd_checkpoint_path: str
+    pdd_adaln_affine_path: str
 
 
 class GenerationPayload(BaseModel):
@@ -57,7 +67,13 @@ class GenerationPayload(BaseModel):
     prompt_transform_applied: bool = False
     prompt_transform_template_version: str | None = Field(default=None, max_length=64)
     profile: Literal[
-        "quality", "fast", "fast_sage", "fast_sage_detail", "custom"
+        "quality",
+        "fast",
+        "fast_sage",
+        "fast_sage_detail",
+        "pdd",
+        "pdd_sage",
+        "custom",
     ] = "fast_sage"
     task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
     width: int = Field(default=512, ge=256, le=1536)
@@ -72,6 +88,7 @@ class GenerationPayload(BaseModel):
     steps: int = Field(default=20, ge=2, le=100)
     attention_backend: Literal["sdpa", "sageattn"] = "sageattn"
     easycache: bool = True
+    pdd: bool = False
     easycache_threshold: float = Field(default=0.4, ge=0.0, le=2.0)
     easycache_start: float = Field(default=0.15, ge=0.0, le=1.0)
     easycache_end: float = Field(default=0.95, ge=0.0, le=1.0)
@@ -157,6 +174,7 @@ def _profile_values(payload: GenerationPayload) -> dict[str, object]:
         "steps": payload.steps,
         "attention_backend": payload.attention_backend,
         "easycache": payload.easycache,
+        "pdd": payload.pdd,
         "easycache_threshold": payload.easycache_threshold,
         "easycache_start": payload.easycache_start,
         "easycache_end": payload.easycache_end,
@@ -480,6 +498,12 @@ def create_app(
                 ),
                 vae_tile_size=int(profile["vae_tile_size"]),
                 attention_backend=str(profile["attention_backend"]),
+                pdd_checkpoint=(
+                    Path(current.pdd_checkpoint_path) if bool(profile["pdd"]) else None
+                ),
+                pdd_adaln_affine=(
+                    Path(current.pdd_adaln_affine_path) if bool(profile["pdd"]) else None
+                ),
             )
             plan = await asyncio.to_thread(backend.plan, request)
             if not plan.executable:

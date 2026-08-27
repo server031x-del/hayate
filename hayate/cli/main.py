@@ -95,6 +95,18 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--easycache-end", type=float, default=0.95)
     generate_parser.add_argument("--easycache-max-consecutive-skips", type=int, default=2)
     generate_parser.add_argument(
+        "--pdd-checkpoint",
+        type=Path,
+        default=None,
+        help="Alibaba PAI MiniMax-H3 PDD acceleration checkpoint (mutually exclusive with EasyCache)",
+    )
+    generate_parser.add_argument(
+        "--pdd-adaln-affine",
+        type=Path,
+        default=None,
+        help="AdaLN affine map used to project released PDD adapters onto a pruned transformer",
+    )
+    generate_parser.add_argument(
         "--vae-tile-size",
         type=int,
         default=256,
@@ -130,6 +142,19 @@ def build_parser() -> argparse.ArgumentParser:
             "apply the RTX 3060 SageAttention detail profile: keep 20 points and "
             "EasyCache 0.4 while protecting the final 15 percent of denoising"
         ),
+    )
+    speed_profiles.add_argument(
+        "--rtx3060-pdd",
+        action="store_true",
+        help=(
+            "apply the safe PDD Acc 8-Step profile with PyTorch SDPA; use the "
+            "experimental --rtx3060-pdd-sage only when short-clip output is validated"
+        ),
+    )
+    speed_profiles.add_argument(
+        "--rtx3060-pdd-sage",
+        action="store_true",
+        help="apply experimental PDD Acc 8-Step with SageAttention (8 transformer evaluations)",
     )
     generate_parser.add_argument("--dry-run", action="store_true")
     generate_parser.add_argument("--json", action="store_true", dest="as_json")
@@ -358,6 +383,10 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         if args.rtx3060_fast_sage
         else "fast_sage_detail"
         if args.rtx3060_fast_sage_detail
+        else "pdd"
+        if args.rtx3060_pdd
+        else "pdd_sage"
+        if args.rtx3060_pdd_sage
         else None
     )
     if selected_profile is not None:
@@ -375,6 +404,13 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
             "vae_tile_size",
         ):
             setattr(args, field, getattr(profile, field))
+        if profile.pdd:
+            args.pdd_checkpoint = args.pdd_checkpoint or Path(
+                "models/lora/MiniMax-H3-FL2VA-Acc-8Step.safetensors"
+            )
+            args.pdd_adaln_affine = args.pdd_adaln_affine or Path(
+                "models/lora/adaln_affine.safetensors"
+            )
     config_path = (args.config or _default_config()).resolve(strict=False)
     backend = ExternalH3GenerationBackend(
         args.upstream,
@@ -404,6 +440,8 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         easycache_max_consecutive_skips=args.easycache_max_consecutive_skips,
         vae_tile_size=args.vae_tile_size,
         attention_backend=args.attention_backend,
+        pdd_checkpoint=args.pdd_checkpoint,
+        pdd_adaln_affine=args.pdd_adaln_affine,
     )
     plan = backend.plan(request)
     payload = plan.to_dict()

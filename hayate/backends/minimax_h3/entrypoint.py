@@ -11,6 +11,7 @@ from hayate.backends.minimax_h3.events import emit_event, install_structured_eve
 from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter
 from hayate.backends.minimax_h3.nvfp4_conditioner import install_nvfp4_conditioner_override
 from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_override
+from hayate.backends.minimax_h3.pdd import install_pdd_override
 from hayate.backends.minimax_h3.vae_tiling import (
     install_vae_attention_override,
     install_vae_tiling_override,
@@ -42,6 +43,9 @@ def _collect_runtime_metrics(module, psutil, torch) -> dict:
     controller = getattr(module, "_hayate_easycache_controller", None)
     if controller is not None:
         metrics["easycache"] = controller.stats()
+    pdd_controller = getattr(module, "_hayate_pdd_controller", None)
+    if pdd_controller is not None:
+        metrics["pdd"] = pdd_controller.stats()
     return metrics
 
 
@@ -66,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     install_easycache_override(module, EasyCacheConfig.from_environment())
     install_prompt_cache_override(module, upstream_commit=validation.commit or validation.audited_commit)
     install_w4a8_override(module)
+    install_pdd_override(module)
     install_nvfp4_conditioner_override()
     install_vae_tiling_override()
     install_vae_attention_override("sdpa")

@@ -147,6 +147,30 @@ threshold to `0.4`, but forces a real Transformer evaluation after at most two
 cached calls. EasyCache is opt-in because skipped Transformer evaluations trade
 a small amount of numerical fidelity for speed.
 
+For the separately released PDD Acc 8-Step trajectory, place the FL2VA PDD
+checkpoint and AdaLN affine map under `models/lora/`, then select `PDD 8-Step`
+in Studio or use the dedicated CLI profile:
+
+```powershell
+uv run --no-sync hayate generate `
+  --upstream M:/path/to/maybleMyers-h3 `
+  --ckpt-dir M:/path/to/MiniMax-H3-snapshot `
+  --config configs/models.local.yaml `
+  --prompt "A cinematic scene" `
+  --output outputs/hayate-pdd.mp4 `
+  --rtx3060-pdd
+```
+
+PDD is an alternative to EasyCache, not an additional cache layer. HAYATE
+rejects the combination. The validated PDD profile uses SDPA; SageAttention
+remains available as an explicit experimental switch, but is fail-closed below
+243 frames on the RTX 3060 path after short-clip non-finite latent detection.
+The released 2688-wide AdaLN adapters are projected onto the validated Comfy-Org
+pruned 8-wide coordinates without modifying the W4A8 base. See
+[`docs/PDD_ACCELERATION.md`](docs/PDD_ACCELERATION.md).
+PDD adapter pages remain pageable by default; set `HAYATE_PDD_PIN_LORA=1`
+explicitly only after measuring a host.
+
 On the reference Windows RTX 3060, the validated approximate-attention profile
 cut the same fixed-seed 512x512, 243-frame run from 12m04s to 6m59s while
 retaining the safe 256-pixel VAE tiling geometry:
@@ -247,6 +271,9 @@ weights are referenced in place and are not copied.
   and image/reference contents, with crash-safe atomic cache replacement.
 - Opt-in MiniMax-H3 EasyCache with video/audio residuals, caller-owned tensor
   preservation, configurable threshold/window, and runtime skip telemetry.
+- MiniMax-H3 PDD Acc 8-Step as a switchable EasyCache-exclusive mode, including
+  strict 728-tensor validation, pruned-AdaLN affine projection, and runtime NFE
+  telemetry; SDPA is the validated profile and SageAttention is experimental.
 - Windows-native `pread` loading for large safetensors checkpoints, avoiding
   intermittent `torch_cpu.dll` access violations at the mmap boundary.
 

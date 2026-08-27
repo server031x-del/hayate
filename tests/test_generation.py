@@ -99,6 +99,37 @@ def test_generation_request_rejects_non_progressing_vae_tile_geometry(tmp_path):
     assert "vae_tile_size must be a multiple of 16 greater than 64" in issues
 
 
+def test_generation_request_rejects_pdd_easycache_combination(tmp_path):
+    issues = ExternalH3GenerationBackend._validate_request(
+        GenerationRequest(
+            "test",
+            tmp_path / "checkpoint",
+            tmp_path / "out.mp4",
+            easycache=True,
+            pdd_checkpoint=tmp_path / "pdd.safetensors",
+        )
+    )
+    assert "PDD and EasyCache are mutually exclusive; select only one acceleration mode" in issues
+
+
+def test_generation_request_rejects_short_pdd_sage(tmp_path):
+    issues = ExternalH3GenerationBackend._validate_request(
+        GenerationRequest(
+            "test",
+            tmp_path / "checkpoint",
+            tmp_path / "out.mp4",
+            frames=124,
+            steps=9,
+            attention_backend="sageattn",
+            pdd_checkpoint=tmp_path / "pdd.safetensors",
+        )
+    )
+    assert any(
+        "PDD with SageAttention is disabled below 243 frames" in issue
+        for issue in issues
+    )
+
+
 def test_optional_python_module_probe_reports_import_failure(tmp_path):
     backend = object.__new__(ExternalH3GenerationBackend)
     backend.python = tmp_path / "python.exe"

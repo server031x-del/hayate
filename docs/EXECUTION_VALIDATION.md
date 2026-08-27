@@ -161,6 +161,27 @@ a regression/difference check, not a perceptual quality score. The one-extra-
 evaluation design keeps the expected cost near 5%-10% over a warm `最速` run,
 while retaining late-stage detail calculation.
 
+### PDD Acc 8-Step and short-clip attention guard
+
+The released `MiniMax-H3-FL2VA-Acc-8Step.safetensors` was exercised with the
+validated W4A8, NVFP4/AWQ, INT8 ConvRot Video VAE, FP32 Audio VAE, 49 swapped
+blocks, 32768 activation rows, and a 256-pixel VAE tile. The PDD checkpoint
+loaded all 728 tensors and reported eight Transformer forward calls. The
+pruned AdaLN branches were projected through the validated affine map.
+
+| Run | Attention | Frames | Denoise / total | Result |
+|---|---|---:|---:|---|
+| 512x512 automotive T2V | SageAttention 2.2 | 243 (10.125 s) | about 6m08s / 560.8 s | normal H.264 + AAC; no black interval or silent audio |
+| 512x512 automotive T2V | PyTorch SDPA | 124 (5.167 s) | about 3m15s / 292.9 s | normal H.264 + AAC; audio RMS -8.71 dB, no NaN/Inf |
+| 512x512 automotive T2V | SageAttention 2.2 | 124 (5.167 s) | about 4m06s / 245.6 s | rejected: non-finite latents yielded black video and silent audio |
+
+The short-clip failure is specific to the PDD/SageAttention interaction: a
+non-PDD SageAttention run at the same 124-frame geometry is healthy, and PDD
+with SDPA is healthy. The shipping PDD profile therefore selects SDPA. The
+experimental PDD+Sage path is fail-closed below the aligned 243-frame geometry
+until a separate numerical-stability fix is validated. This guard prevents a
+black MP4 from being recorded as a successful library item.
+
 ## Windows non-mmap checkpoint loading
 
 An intermittent Windows native access violation was observed in
