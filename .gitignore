@@ -11,7 +11,7 @@ benchmarks/*.json
 outputs/
 configs/models.local.yaml
 .research/
-models/
+/models/
 upstream/h3/
 data/webui/
 .playwright-cli/
