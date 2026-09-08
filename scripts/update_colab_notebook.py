@@ -278,7 +278,11 @@ for source, target in MODEL_LINKS.items():
         placed.append(str(target.relative_to(WEBUI_ROOT)))
         print('MODEL_REUSE', target, flush=True)
         continue
-    if target.is_symlink() or target.is_file():
+    if target.is_file() and not target.is_symlink():
+        placed.append(str(target.relative_to(WEBUI_ROOT)))
+        print('MODEL_REUSE', target, flush=True)
+        continue
+    if target.is_symlink():
         target.unlink()
     elif target.exists():
         raise RuntimeError(f'Unexpected model target: {target}')
