@@ -1,0 +1,5 @@
+from .nodes import H3VSA
+
+NODE_CLASS_MAPPINGS = {"H3VSA": H3VSA}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3VSA": "MiniMax H3 VSA (FastVideo + gate)"}
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
