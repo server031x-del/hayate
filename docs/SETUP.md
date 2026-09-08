@@ -43,7 +43,7 @@ uv sync --extra generation --extra webui
 git clone https://github.com/maybleMyers/h3 upstream/h3
 git -C upstream/h3 checkout --detach 94220c1fdf14d6d9d40be06fb99f55b27c0d9024
 mkdir -p models/minimax-h3-snapshot models/text_encoders models/vae models/lora \
-  outputs/prompt_cache data/webui
+  models/fastvideo outputs/prompt_cache data/webui
 uv run hayate webui --host 0.0.0.0 --port 7860 --allow-network
 ```
 
@@ -65,3 +65,12 @@ models/
 
 大容量モデルの取得は初回セットアップに含めず、空き容量・ライセンス・必要な
 プロファイルを確認したうえで行います。
+
+FastH3/FastVideoをWindows WSLで使う場合は、通常のHAYATE環境と分離した
+専用ランタイムを次で準備できます。公式プレビューは約148 GB（約138 GiB）のため、重みの
+取得は明示的な`-DownloadModel`指定時だけ開始します。詳細は
+[`FASTH3_WSL.md`](FASTH3_WSL.md)を参照してください。
+
+```powershell
+.\scripts\setup_fasth3_wsl.ps1 -Distribution Ubuntu
+```

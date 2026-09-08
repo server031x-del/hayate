@@ -1,3 +1,5 @@
+[HAYATE StudioをColabで開く](https://colab.research.google.com/github/server031x-del/hayate/blob/codex/colab-fast-h3/colab/HAYATE.ipynb) — GitHubから直接導入できます。手順は[colab/README.md](colab/README.md)。
+
 # HAYATE
 
 **High-speed AI Yield & Acceleration Technology Engine**
@@ -6,17 +8,18 @@ Goal: run large generative AI models efficiently on consumer hardware.
 
 Initial target: MiniMax H3.
 
-Reference development hardware:
+Reference validation host (the runtime is not limited to this hardware):
 
-- NVIDIA GeForce RTX 3060 12 GB (v0.1 inference target)
-- NVIDIA GeForce GTX 1660 SUPER 6 GB (detected only in v0.1)
+- NVIDIA GeForce RTX 3060 12 GB (v0.1 validation GPU)
+- NVIDIA GeForce GTX 1660 SUPER 6 GB (detected; native H3 W4A8 is SM-gated)
 - 32 GB system RAM
 - Intel Core i7-9700
 
 Status: **Experimental, end-to-end generation enabled**. v0.1 includes safe
 model inspection, a pinned external upstream launcher, direct optimized loaders,
-and RTX 3060 / 32 GB packed-weight streaming. A fixed-seed 50-step video/audio
-generation has passed; broader resolutions and long clips remain benchmark work.
+and consumer-GPU / host-RAM packed-weight streaming. A fixed-seed 50-step
+video/audio generation has passed; broader resolutions and long clips remain
+benchmark work.
 
 ## Relationship to maybleMyers/h3
 
@@ -68,6 +71,19 @@ Equivalent module invocation:
 uv run python -m hayate inspect
 ```
 
+### Google Colab WebUI
+
+The hosted WebUI path is documented in [`docs/COLAB_WEBUI.md`](docs/COLAB_WEBUI.md).
+Build the private-source upload bundle with:
+
+```powershell
+python scripts/create_colab_webui_bundle.py
+```
+
+Then run the WebUI cells in [`colab/HAYATE.ipynb`](colab/HAYATE.ipynb). The
+notebook binds HAYATE Studio to the Colab VM and publishes it through a
+temporary HTTPS tunnel; it does not start a service on the local PC.
+
 For a CUDA-enabled full runtime environment, install the optional PyTorch
 dependency. The uv configuration pins that extra to PyTorch's CUDA 12.8 wheel
 index, which is compatible with this machine's newer NVIDIA driver:
@@ -76,11 +92,12 @@ index, which is compatible with this machine's newer NVIDIA driver:
 uv sync --extra cuda
 ```
 
-Verify that the distributed W4A8 extension really executes on GPU 0 (an eager
-fallback is deliberately rejected):
+Verify that the distributed W4A8 extension really executes on an eligible GPU
+(an eager fallback is deliberately rejected). Use `--gpu auto`, a physical
+index, or an NVIDIA UUID to choose the adapter:
 
 ```powershell
-uv run hayate kernel-check
+uv run hayate kernel-check --gpu auto
 ```
 
 The inspection CLI itself does not require PyTorch and does not load model
@@ -122,6 +139,60 @@ Run with an alternate registry:
 uv run hayate inspect --config configs/models.local.yaml --verbose
 ```
 
+The optional Kijai FastH3/VSA artifact can be checked without loading its
+22.9GB payload:
+
+```powershell
+uv run hayate fasth3-check `
+  --checkpoint models/minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors `
+  --model-dir models/fastvideo
+```
+
+This command reports the VSA gate/layout, FastVideo runtime availability, and
+the exact blockers. The Kijai file is a ComfyUI single-file conversion and is
+checked for provenance/integrity only; HAYATE execution uses the separate
+official [FastVideo FastH3 Preview v1 directory snapshot](https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree)
+(the older v0.2 snapshot remains compatible with the directory validator). This is a compatibility guard,
+not a failed normal H3 setup.
+
+After the optional FastVideo runtime and directory snapshot pass preflight, the
+same route can be selected explicitly from the CLI:
+
+```powershell
+uv run hayate generate `
+  --fasth3 `
+  --python wsl://Ubuntu/home/<WSLユーザー>/hayate-fasth3-venv/bin/python `
+  --ckpt-dir models/fastvideo `
+  --prompt "A cinematic car commercial" `
+  --output outputs/fasth3.mp4
+```
+
+Blackwellで最速プロファイルを明示する場合は、先に条件を診断してから
+`fasth3-check --performance-profile fast`を通し、WebUIの
+**FastH3 Blackwell最速**を選択します。CLIの`--fasth3`は安全なstrict経路です。
+
+The adapter currently targets T2VA only (five sigma points / four DiT
+forwards), uses the Triton VSA path on consumer GPUs, and never falls back to
+dense attention when a VSA requirement is missing. The WebUI also exposes a
+separate Blackwell-only speed profile that requires sm100a VSA and FA4 and
+enables the official `profile=all` fusions, regional compile, and parallel VAE
+decode; it remains disabled on other GPUs.
+
+For the Kijai single-file VSA route, use the separate shared-model ComfyUI
+runtime described in [`docs/COMFYUI_HAYATE.md`](docs/COMFYUI_HAYATE.md). It is
+installed on M:, points at the existing HAYATE model folders, and keeps
+generated output in `M:/Project/HAYATE/outputs`; no model copy is made under the
+ComfyUI directory.
+
+速度を優先する場合のSageAttention/Triton構成（モデルを共有し、重みを複製しない）は
+[`docs/COMFYUI_HAYATE.md`](docs/COMFYUI_HAYATE.md) の **Turbo構成** を参照してください。
+
+For a reproducible Windows/WSL installation, use
+[`docs/FASTH3_WSL.md`](docs/FASTH3_WSL.md). It creates an isolated FastVideo
+environment and provides an explicit, resumable download command for the
+official approximately 148 GB (about 138 GiB) snapshot. The normal HAYATE bootstrap never
+starts that download automatically.
+
 Preflight the actual upstream generation command without loading tensors:
 
 ```powershell
@@ -135,8 +206,8 @@ uv run hayate generate `
 ```
 
 HAYATE passes the four single-file overrides to upstream
-`minimax_generate_video.py`. Its RTX 3060 fidelity profile keeps SDPA and the
-upstream 50-point sigma grid, swaps 49 transformer blocks, streams the text
+`minimax_generate_video.py`. Its conservative fidelity profile keeps SDPA and
+the upstream 50-point sigma grid, swaps 49 transformer blocks, streams the text
 encoder with zero resident decoder layers, chunks activations, and enables VAE
 tiling. Remove `--dry-run` only after preflight reports `READY`.
 
@@ -151,11 +222,15 @@ uv run hayate generate `
   --config configs/models.local.yaml `
   --prompt "A cinematic scene" `
   --output outputs/hayate-fast.mp4 `
-  --rtx3060-fast
+  --fast
 ```
 
+`--fast`, `--fast-sage`, `--fast-sage-detail`, `--pdd`, and `--pdd-sage` are
+the hardware-neutral profile names. The older `--rtx3060-*` spellings remain
+accepted as compatibility aliases for existing scripts.
+
 The conservative defaults match the common `0.2` threshold and `0.15`–`0.95`
-sampling window. The RTX 3060 fast profile above raises the HAYATE integration
+sampling window. The fast profile above raises the HAYATE integration
 threshold to `0.4`, but forces a real Transformer evaluation after at most two
 cached calls. EasyCache is opt-in because skipped Transformer evaluations trade
 a small amount of numerical fidelity for speed.
@@ -171,20 +246,21 @@ uv run --no-sync hayate generate `
   --config configs/models.local.yaml `
   --prompt "A cinematic scene" `
   --output outputs/hayate-pdd.mp4 `
-  --rtx3060-pdd
+  --pdd
 ```
 
 PDD is an alternative to EasyCache, not an additional cache layer. HAYATE
 rejects the combination. The validated PDD profile uses SDPA; SageAttention
 remains available as an explicit experimental switch, but is fail-closed below
-243 frames on the RTX 3060 path after short-clip non-finite latent detection.
+243 frames on the validated consumer-GPU path after short-clip non-finite latent
+detection.
 The released 2688-wide AdaLN adapters are projected onto the validated Comfy-Org
 pruned 8-wide coordinates without modifying the W4A8 base. See
 [`docs/PDD_ACCELERATION.md`](docs/PDD_ACCELERATION.md).
 PDD adapter pages remain pageable by default; set `HAYATE_PDD_PIN_LORA=1`
 explicitly only after measuring a host.
 
-On the reference Windows RTX 3060, the validated approximate-attention profile
+On the reference Windows consumer GPU, the validated approximate-attention profile
 cut the same fixed-seed 512x512, 243-frame run from 12m04s to 6m59s while
 retaining the safe 256-pixel VAE tiling geometry:
 
@@ -195,11 +271,11 @@ uv run --no-sync hayate generate `
   --config configs/models.local.yaml `
   --prompt "A cinematic scene" `
   --output outputs/hayate-fast-sage.mp4 `
-  --rtx3060-fast-sage
+  --fast-sage
 ```
 
 This profile requires a Windows-compatible SageAttention 2.2 build and is
-deliberately separate from `--rtx3060-fast`: SageAttention quantizes attention
+deliberately separate from `--fast`: SageAttention quantizes attention
 internals and is therefore not numerically identical to SDPA. Use SDPA for the
 fidelity reference. VAE tile sizes above the released 256-pixel geometry remain
 experimental; a 512-pixel tile was faster but failed the fixed-seed visual gate.
@@ -248,23 +324,33 @@ The Settings screen also has a model setup panel. It creates the standard
 `models/` directories, scans the four H3 single-file targets plus optional
 acceleration assets, and exposes download buttons only for pinned, verified
 Hugging Face sources. A license acknowledgement is required for each download;
-weights are never copied into Git or silently overwritten.
+weights are never copied into Git or silently overwritten. The catalog includes
+Kijai's `minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors`
+as an explicitly experimental FastH3/VSA artifact. It is kept separate from
+the mayble H3 W4A8 path: the single-file ComfyUI conversion cannot be passed to
+FastVideo's directory loader, so Studio provides a header-only **FastH3利用条件
+診断** and fails closed when the optional FastVideo runtime/model directory is
+not configured. The normal H3 profiles remain unchanged.
 
 Studio includes:
 
 - unchanged Fast Sage (`最速`), a Fast Sage Detail (`高速・画質優先`)
   profile with one extra late refinement, Fast SDPA, Quality, and fully custom
-  generation profiles;
+  generation profiles; plus an explicitly experimental FastH3 VSA 4-step
+  profile and a Blackwell-only FastH3 v1 speed profile that are disabled until
+  the official FastVideo directory/runtime preflight passes (the Kijai single
+  file remains external-ComfyUI-only);
 - readable resolution presets from lightweight 512px social formats through
-  16:9 HD, grouped by RTX 3060-friendly and high-detail memory tiers, plus a
-  32-pixel custom mode;
+  16:9 HD, grouped by light and high-detail memory tiers, plus a 32-pixel
+  custom mode;
 - T2V/I2V image upload, duration snapping to MiniMax H3 frame geometry, prompt
   cache, EasyCache, block swap, activation chunking, and VAE controls;
 - an explicit MiniMax H3 prompt assistant that previews and applies structured
   visual/action/camera, sound, and music fields without silently rewriting the
   user's prompt, plus optional OpenAI Responses API authoring with a
   configurable model;
-- a single-GPU FIFO queue with a cross-process lease shared with the CLI;
+- physical-GPU selection by stable NVIDIA UUID, UUID-scoped leases shared with
+  the CLI, and optional one-process-per-GPU WebUI workers (safe default: 1);
 - structured `HAYATE_EVENT` progress, stage timeline, ETA, VRAM/RAM status,
   persisted job logs, safe stop-and-save, and immediate cancellation;
 - persistent SQLite history, existing-output import, search, video previews,
@@ -285,8 +371,9 @@ Manager through `keyring` when available, with an in-process-only fallback.
 
 ## v0.1 capabilities
 
-- Windows/Linux/WSL-friendly hardware profiling with GPU 0 selected as the only
-  v0.1 execution target.
+- Windows/Linux/WSL-friendly hardware profiling with all detected NVIDIA GPUs
+  visible in the UI; H3 W4A8 auto/manual assignment is gated by SM 8.0+ while
+  GPU 0 remains the primary display marker for backward compatibility.
 - Bounded safetensors JSON-header parsing without mapping tensor payloads.
 - Evidence-based detection of W4A8 mixed, NVFP4+AWQ, INT8 ConvRot, FP32, FP16,
   BF16, and FP8. Ambiguous layouts remain `UNKNOWN`.
@@ -307,6 +394,9 @@ Manager through `keyring` when available, with an in-process-only fallback.
   telemetry; SDPA is the validated profile and SageAttention is experimental.
 - Windows-native `pread` loading for large safetensors checkpoints, avoiding
   intermittent `torch_cpu.dll` access violations at the mmap boundary.
+- Header-only FastH3/VSA inspection (`hayate fasth3-check`) with explicit
+  `to_gate_compress`/INT8/ComfyUI-layout evidence; no silent fallback to the
+  standard W4A8 loader.
 
 ## Current execution support
 
@@ -318,6 +408,7 @@ Manager through `keyring` when available, with an in-process-only fallback.
 | FP32 / FP16 / BF16 | Yes | Yes | Raw safetensors materialization when PyTorch is installed |
 | FP8 | Yes | Yes | Hardware/kernel-specific integration pending |
 | Unknown | Yes | Safe blocked route | No |
+| FastH3/VSA single-file | Yes; VSA gate and fused ComfyUI layout | Diagnostic only; external ComfyUI/VSA | Not a HAYATE input. HAYATE can launch the separate official FastVideo directory with its optional runtime; no dense fallback |
 
 The exact public W4A8 header contract is now audited: 200 packed
 `asym_w4a8_int8` layers, group size 16, ConvRot group size 256, FP8 relative

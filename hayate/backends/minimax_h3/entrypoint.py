@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from hayate.backends.minimax_h3.vae_tiling import (
     install_vae_tiling_override,
 )
 from hayate.backends.minimax_h3.w4a8_upstream import install_w4a8_override
+from hayate.runtime.gpu_lease import GPULease
 
 
 def _collect_runtime_metrics(module, psutil, torch) -> dict:
@@ -54,6 +56,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("upstream_args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
+
+    # Acquire the child-owned runtime lease before importing upstream/H3 or
+    # PyTorch.  This closes the startup window in which an orphaned child
+    # could otherwise hold CUDA while a second process imports the engine.
+    runtime_lease: GPULease | None = None
+    if os.environ.get("HAYATE_GPU_RUNTIME_LEASE") == "1":
+        gpu_id = os.environ.get("HAYATE_GPU_UUID") or None
+        if gpu_id is None and os.environ.get("HAYATE_GPU_INDEX"):
+            gpu_id = f"index:{os.environ['HAYATE_GPU_INDEX']}"
+        runtime_lease = GPULease(
+            gpu_id=gpu_id,
+            namespace="runtime",
+            owner={
+                "pid": os.getpid(),
+                "kind": "generation-runtime",
+                "gpu_uuid": os.environ.get("HAYATE_GPU_UUID") or None,
+                "gpu_index": os.environ.get("HAYATE_GPU_INDEX"),
+            },
+        )
+        if not runtime_lease.acquire():
+            owner = runtime_lease.busy_owner() or {}
+            raise RuntimeError(
+                f"選択したGPUの実行ロックを取得できません (pid={owner.get('pid', '?')})"
+            )
+
     adapter = H3UpstreamAdapter(args.upstream)
     validation = adapter.require_valid(require_audited_commit=True)
     engine_dir = adapter.checkout / "minimax_engine"
@@ -90,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         metrics = _collect_runtime_metrics(module, psutil, torch)
         emit_event("metrics", runtime_metrics=metrics)
         print("HAYATE_RUNTIME_METRICS " + json.dumps(metrics, sort_keys=True), flush=True)
+        if runtime_lease is not None:
+            runtime_lease.release()
     return 0
 
 

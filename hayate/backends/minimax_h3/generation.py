@@ -21,6 +21,14 @@ from hayate.loaders.base import LoaderStatus
 from hayate.loaders.factory import LoaderFactory
 from hayate.models import ModelRegistry
 from hayate.models.types import ModelRole
+from hayate.runtime.gpu_devices import (
+    AUTO_GPU,
+    allowed_gpu_devices,
+    choose_auto_gpu,
+    discover_gpu_devices,
+    normalize_gpu_selector,
+    resolve_gpu_selector,
+)
 from hayate.runtime.gpu_lease import GPULease
 
 
@@ -55,6 +63,10 @@ class GenerationRequest:
     attention_backend: str = "sdpa"
     pdd_checkpoint: Path | None = None
     pdd_adaln_affine: Path | None = None
+    # ``auto`` lets the WebUI scheduler choose a free physical adapter.  An
+    # explicit index or UUID is resolved to a UUID before the child process is
+    # launched; inside upstream H3 the selected adapter remains cuda:0.
+    gpu_device: str = AUTO_GPU
 
 
 @dataclass(frozen=True)
@@ -62,20 +74,30 @@ class GenerationPlan:
     request: GenerationRequest
     command: tuple[str, ...]
     environment: dict[str, str]
-    upstream: UpstreamValidation
+    upstream: UpstreamValidation | None
     issues: tuple[str, ...]
     warnings: tuple[str, ...]
+    # Optional execution metadata used by alternate, explicitly selected
+    # backends.  The mayble H3 path keeps the historical defaults.
+    working_directory: Path | None = None
+    backend: str = "mayble_h3"
 
     @property
     def executable(self) -> bool:
-        return self.upstream.valid and not self.issues
+        return (self.upstream is None or self.upstream.valid) and not self.issues
 
     def to_dict(self) -> dict:
         return {
             "executable": self.executable,
+            "backend": self.backend,
+            "working_directory": (
+                str(self.working_directory.resolve(strict=False))
+                if self.working_directory is not None
+                else None
+            ),
             "command": list(self.command),
             "environment": self.environment,
-            "upstream": self.upstream.to_dict(),
+            "upstream": self.upstream.to_dict() if self.upstream is not None else None,
             "issues": list(self.issues),
             "warnings": list(self.warnings),
             "request": {
@@ -112,6 +134,7 @@ class GenerationPlan:
                     if self.request.pdd_adaln_affine is not None
                     else None
                 ),
+                "gpu_device": self.request.gpu_device,
             },
         }
 
@@ -143,6 +166,15 @@ def runtime_metrics_from_log(log_path: Path) -> dict | None:
                 runtime_metrics = json.loads(line.removeprefix("HAYATE_RUNTIME_METRICS "))
             except json.JSONDecodeError:
                 runtime_metrics = None
+        elif "HAYATE_EVENT " in line:
+            try:
+                event_text = line.split("HAYATE_EVENT ", 1)[1].lstrip()
+                event, _ = json.JSONDecoder().raw_decode(event_text)
+            except (IndexError, json.JSONDecodeError):
+                continue
+            if event.get("type") == "metrics":
+                candidate = event.get("runtime_metrics")
+                runtime_metrics = candidate if isinstance(candidate, dict) else None
     return runtime_metrics
 
 
@@ -154,6 +186,7 @@ def write_generation_manifest(
     log_path: Path,
     runtime_metrics: dict | None,
     job_id: str | None = None,
+    gpu_assignment: dict | None = None,
 ) -> Path:
     _, manifest_path = generation_artifact_paths(plan.request.output)
     payload = {
@@ -166,6 +199,8 @@ def write_generation_manifest(
     }
     if job_id is not None:
         payload["job_id"] = job_id
+    if gpu_assignment is not None:
+        payload["gpu_assignment"] = gpu_assignment
     temporary = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
     try:
         temporary.write_text(
@@ -272,6 +307,10 @@ class ExternalH3GenerationBackend:
             issues.append(str(exc))
         if request.attention_backend not in {"sdpa", "sageattn"}:
             issues.append(f"unsupported attention backend: {request.attention_backend}")
+        try:
+            normalize_gpu_selector(request.gpu_device)
+        except ValueError as exc:
+            issues.append(str(exc))
         if request.pdd_checkpoint is not None and request.easycache:
             issues.append("PDD and EasyCache are mutually exclusive; select only one acceleration mode")
         if request.pdd_checkpoint is not None and request.task == "ref2va":
@@ -283,7 +322,7 @@ class ExternalH3GenerationBackend:
         ):
             issues.append(
                 "PDD with SageAttention is disabled below 243 frames on the validated "
-                "RTX 3060 path because short clips can produce non-finite latents; select SDPA"
+                "consumer-GPU path because short clips can produce non-finite latents; select SDPA"
             )
         for label, path in (
             ("first image", request.image_path),
@@ -377,7 +416,9 @@ class ExternalH3GenerationBackend:
         if request.steps != 50:
             warnings.append("non-default step count changes the model's quality/speed operating point")
         if request.blocks_to_swap < 40:
-            warnings.append("fewer than 40 swapped blocks is unlikely to fit an RTX 3060 12GB")
+            warnings.append(
+                "fewer than 40 swapped blocks may require more VRAM; confirm the selected GPU's free memory"
+            )
         if request.task == "ref2va":
             warnings.append("the initial W4A8 target is FL2VA; ref2va needs its matching transformer layout")
         if request.easycache:
@@ -388,6 +429,26 @@ class ExternalH3GenerationBackend:
             )
         if request.attention_backend == "sageattn":
             warnings.append("SageAttention is approximate; compare quality against SDPA")
+
+        normalized_gpu = AUTO_GPU
+        selected_gpu = None
+        try:
+            normalized_gpu = normalize_gpu_selector(request.gpu_device)
+        except ValueError:
+            # _validate_request already records the user-facing issue.
+            pass
+        if normalized_gpu != AUTO_GPU:
+            devices = allowed_gpu_devices(discover_gpu_devices(self._runner))
+            selected_gpu = resolve_gpu_selector(normalized_gpu, devices)
+            if selected_gpu is None:
+                issues.append(
+                    f"selected GPU was not found: {request.gpu_device} (use auto or a detected UUID/index)"
+                )
+            elif not selected_gpu.h3_eligible:
+                issues.append(
+                    f"selected GPU is not eligible for the HAYATE W4A8 path: "
+                    f"{selected_gpu.name} ({selected_gpu.eligibility_reason})"
+                )
 
         command = [
             str(self.python),
@@ -451,6 +512,11 @@ class ExternalH3GenerationBackend:
             {} if os.name == "nt" else {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
         )
         environment["HAYATE_VAE_TILE_SIZE"] = str(request.vae_tile_size)
+        environment["HAYATE_GPU_SELECTOR"] = normalized_gpu
+        if selected_gpu is not None:
+            environment["CUDA_VISIBLE_DEVICES"] = selected_gpu.visible_id
+            environment["HAYATE_GPU_UUID"] = selected_gpu.uuid or ""
+            environment["HAYATE_GPU_INDEX"] = str(selected_gpu.index)
         if request.easycache:
             environment.update(
                 {
@@ -519,14 +585,83 @@ class ExternalH3GenerationBackend:
         env.update(plan.environment)
         env["PYTHONIOENCODING"] = "utf-8"
         started = time.perf_counter()
+        selected_gpu = None
+        gpu_id = env.get("HAYATE_GPU_UUID") or None
+        if gpu_id is None and env.get("HAYATE_GPU_INDEX"):
+            gpu_id = f"index:{env['HAYATE_GPU_INDEX']}"
+        if gpu_id is not None:
+            try:
+                selected_gpu = resolve_gpu_selector(
+                    env.get("HAYATE_GPU_UUID") or env.get("HAYATE_GPU_INDEX") or gpu_id,
+                    allowed_gpu_devices(
+                        discover_gpu_devices(self._runner),
+                        visible_devices=env.get("CUDA_VISIBLE_DEVICES"),
+                    ),
+                )
+            except ValueError:
+                selected_gpu = None
+        if gpu_id is None and plan.request.gpu_device != AUTO_GPU:
+            try:
+                selected = resolve_gpu_selector(
+                    plan.request.gpu_device,
+                    allowed_gpu_devices(
+                        discover_gpu_devices(self._runner),
+                        visible_devices=env.get("CUDA_VISIBLE_DEVICES"),
+                    ),
+                )
+            except ValueError:
+                selected = None
+            if selected is not None:
+                selected_gpu = selected
+                gpu_id = selected.identity
+                env["CUDA_VISIBLE_DEVICES"] = selected.visible_id
+                env["HAYATE_GPU_UUID"] = selected.uuid or ""
+                env["HAYATE_GPU_INDEX"] = str(selected.index)
+        if gpu_id is None and plan.request.gpu_device == AUTO_GPU:
+            selected = choose_auto_gpu(
+                allowed_gpu_devices(
+                    discover_gpu_devices(self._runner),
+                    visible_devices=env.get("CUDA_VISIBLE_DEVICES"),
+                )
+            )
+            if selected is not None:
+                selected_gpu = selected
+                gpu_id = selected.identity
+                env["CUDA_VISIBLE_DEVICES"] = selected.visible_id
+                env["HAYATE_GPU_UUID"] = selected.uuid or ""
+                env["HAYATE_GPU_INDEX"] = str(selected.index)
+        if gpu_id is not None:
+            env["HAYATE_GPU_RUNTIME_LEASE"] = "1"
         lease = GPULease(
-            owner={"pid": os.getpid(), "kind": "generation", "output": str(plan.request.output)}
+            gpu_id=gpu_id,
+            namespace="scheduler",
+            owner={
+                "pid": os.getpid(),
+                "kind": "generation",
+                "output": str(plan.request.output),
+                "gpu_uuid": env.get("HAYATE_GPU_UUID") or None,
+                "gpu_index": env.get("HAYATE_GPU_INDEX"),
+            },
         )
         if not lease.acquire():
             owner = lease.busy_owner() or {}
             raise GenerationPreflightError(
-                f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})"
+                f"選択したGPUはHAYATEで使用中です (pid={owner.get('pid', '?')})"
             )
+        runtime_probe = None
+        if gpu_id is not None:
+            runtime_probe = GPULease(
+                gpu_id=gpu_id,
+                namespace="runtime",
+                owner={"pid": os.getpid(), "kind": "runtime-probe"},
+            )
+            if not runtime_probe.acquire():
+                lease.release()
+                owner = runtime_probe.busy_owner() or {}
+                raise GenerationPreflightError(
+                    f"選択したGPUの実行ロックが残っています (pid={owner.get('pid', '?')})"
+                )
+            runtime_probe.release()
         try:
             with log_path.open("w", encoding="utf-8") as log:
                 process = subprocess.run(
@@ -542,12 +677,16 @@ class ExternalH3GenerationBackend:
             lease.release()
         duration = time.perf_counter() - started
         runtime_metrics = runtime_metrics_from_log(log_path)
+        if selected_gpu is not None:
+            runtime_metrics = dict(runtime_metrics or {})
+            runtime_metrics["gpu"] = selected_gpu.to_dict()
         write_generation_manifest(
             plan,
             returncode=process.returncode,
             duration_seconds=duration,
             log_path=log_path,
             runtime_metrics=runtime_metrics,
+            gpu_assignment=selected_gpu.to_dict() if selected_gpu is not None else None,
         )
         return GenerationResult(
             process.returncode,

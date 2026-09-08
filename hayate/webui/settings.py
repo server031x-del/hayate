@@ -7,6 +7,8 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from hayate.runtime.gpu_devices import AUTO_GPU, normalize_gpu_selector
+
 
 @dataclass(frozen=True)
 class WebUISettings:
@@ -18,6 +20,15 @@ class WebUISettings:
     prompt_cache_dir: str
     pdd_checkpoint_path: str
     pdd_adaln_affine_path: str
+    # Optional FastVideo/VSA runtime settings.  They do not affect the
+    # validated mayble H3 path and are intentionally excluded from the normal
+    # readiness gate until the experimental backend is selected.
+    fastvideo_model_path: str = ""
+    fastvideo_python_path: str = ""
+    # GPU settings are selectors, not raw CUDA device strings.  UUIDs are
+    # preferred; ``auto`` lets the job scheduler pick a free adapter.
+    gpu_default_selector: str = "auto"
+    gpu_parallel_jobs: int = 1
 
     @classmethod
     def defaults(cls, workspace: Path) -> WebUISettings:
@@ -36,18 +47,49 @@ class WebUISettings:
                 workspace / "models" / "lora" / "MiniMax-H3-FL2VA-Acc-8Step.safetensors"
             ),
             pdd_adaln_affine_path=str(workspace / "models" / "lora" / "adaln_affine.safetensors"),
+            fastvideo_model_path=str(workspace / "models" / "fastvideo"),
+            fastvideo_python_path=str(Path(sys.executable).resolve(strict=False)),
+            gpu_default_selector="auto",
+            gpu_parallel_jobs=1,
         )
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
     def resolved(self) -> WebUISettings:
-        return WebUISettings(
-            **{
-                key: str(Path(value).expanduser().resolve(strict=False))
-                for key, value in self.to_dict().items()
-            }
-        )
+        path_fields = {
+            "config_path",
+            "upstream_path",
+            "checkpoint_dir",
+            "output_dir",
+            "python_path",
+            "prompt_cache_dir",
+            "pdd_checkpoint_path",
+            "pdd_adaln_affine_path",
+            "fastvideo_model_path",
+            "fastvideo_python_path",
+        }
+        values = self.to_dict()
+        for key in path_fields:
+            raw_value = str(values[key]).strip()
+            if key == "fastvideo_python_path" and raw_value.lower().startswith("wsl://"):
+                # ``wsl://Ubuntu/...`` is an explicit runtime descriptor, not
+                # a Windows filesystem path.  Preserve it verbatim so the
+                # FastH3 bridge can route the command into WSL.
+                values[key] = raw_value
+                continue
+            values[key] = str(Path(str(values[key])).expanduser().resolve(strict=False))
+        try:
+            values["gpu_default_selector"] = normalize_gpu_selector(
+                str(values.get("gpu_default_selector") or AUTO_GPU)
+            )
+        except ValueError:
+            values["gpu_default_selector"] = AUTO_GPU
+        try:
+            values["gpu_parallel_jobs"] = max(1, min(8, int(values.get("gpu_parallel_jobs", 1))))
+        except (TypeError, ValueError):
+            values["gpu_parallel_jobs"] = 1
+        return WebUISettings(**values)
 
 
 class SettingsStore:

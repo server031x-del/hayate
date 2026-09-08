@@ -23,6 +23,7 @@ $standardDirectories = @(
     "models\text_encoders",
     "models\vae",
     "models\lora",
+    "models\fastvideo",
     "outputs",
     "outputs\prompt_cache",
     "data\webui"

@@ -6,6 +6,7 @@ const state = {
   jobs: [],
   activeJobId: null,
   eventSource: null,
+  eventSources: new Map(),
   duration: 5,
   imageAsset: null,
   dialogTrigger: null,
@@ -34,18 +35,19 @@ const statusLabels = {
 
 const THEME_KEY = "hayate-studio-theme";
 
-// Keep the public presets conservative for the reference RTX 3060 path.  The
-// model itself accepts 32-pixel geometry; these labels make the memory/time
-// trade-off visible before a job is submitted.
+// The model accepts 32-pixel geometry; these labels make the memory/time
+// trade-off visible before a job is submitted.  They are intentionally
+// hardware-neutral: the selected GPU and available RAM determine the actual
+// operating point.
 const RESOLUTION_PRESETS = {
-  "512x512": { tier: "FAST", className: "fast", description: "RTX 3060で速度を優先する安全な基準サイズ" },
+  "512x512": { tier: "FAST", className: "fast", description: "速度を優先する安全な基準サイズ" },
   "512x288": { tier: "FAST", className: "fast", description: "横長SNS向け。軽量で試作に適した16:9" },
   "288x512": { tier: "FAST", className: "fast", description: "縦長SNS向け。軽量で試作に適した9:16" },
   "640x640": { tier: "STANDARD", className: "standard", description: "正方形の標準サイズ。速度と細部のバランス" },
   "768x448": { tier: "STANDARD", className: "standard", description: "横長の標準サイズ。5秒CMの基準におすすめ" },
   "864x480": { tier: "STANDARD", className: "standard", description: "ワイド画角の標準サイズ。映画的な構図向け" },
   "576x768": { tier: "DETAIL", className: "detail", description: "縦長の高精細。RAM/VRAM使用量が増えます" },
-  "768x1024": { tier: "DETAIL", className: "detail", description: "縦長HD。RTX 3060では長尺生成に注意" },
+  "768x1024": { tier: "DETAIL", className: "detail", description: "縦長HD。長尺生成ではRAM/VRAMに注意" },
   "1024x576": { tier: "DETAIL", className: "detail", description: "16:9 HD。品質優先の書き出し向け" },
   "1280x736": { tier: "DETAIL", className: "detail", description: "HD映画サイズ。32GB RAMと十分な空き容量を推奨" },
   "1536x864": { tier: "DETAIL", className: "detail", description: "最高精細16:9。時間・メモリ負荷が最大です" },
@@ -156,11 +158,17 @@ function navigate(view) {
 }
 
 function selectedProfile() {
-  return $('input[name="profile"]:checked')?.value || "fast_sage";
+  return $('input[name="profile"]:checked')?.value || "fast_sage_detail";
 }
 
 function applyProfile(profile) {
   const preset = state.bootstrap?.profiles?.[profile];
+  if (profile === "fasth3" || profile === "fasth3_fast") {
+    // The preview is T2VA-only.  Keep the task selector aligned with the
+    // backend contract while still letting the user switch back to a normal
+    // profile for I2V/reference jobs.
+    $("#task").value = "t2va";
+  }
   if (preset) {
     $("#steps").value = preset.steps;
     $("#attention").value = preset.attention_backend;
@@ -180,6 +188,12 @@ function applyProfile(profile) {
 }
 
 function updateProfileSummary() {
+  if (selectedProfile() === "fasth3" || selectedProfile() === "fasth3_fast") {
+    $("#profileSummary").textContent = selectedProfile() === "fasth3_fast"
+      ? "FastH3 v1 Blackwell · sm100a/FA4/compile · 5 points（4-forward） · T2VAのみ"
+      : "FastH3 VSA · 5 points（4-forward） · T2VAのみ";
+    return;
+  }
   const parts = [`${$("#steps").value} points`, $("#attention").value === "sageattn" ? "SageAttention" : "SDPA"];
   if ($("#easycache").checked) parts.push("EasyCache");
   if ($("#pdd").checked) parts.push("PDD 8-Step");
@@ -272,6 +286,7 @@ function generationPayload() {
     blocks_to_swap: Number($("#blocksSwap").value),
     activation_chunk_rows: Number($("#chunkRows").value),
     vae_tile_size: Number($("#vaeTile").value),
+    gpu_device: $("#gpuDevice").value || "auto",
   };
 }
 
@@ -413,8 +428,9 @@ function upsertJob(job) {
 }
 
 function connectEvents(jobId) {
-  state.eventSource?.close();
+  state.eventSources.get(jobId)?.close();
   const source = new EventSource(`/api/jobs/${jobId}/events`);
+  state.eventSources.set(jobId, source);
   state.eventSource = source;
   source.onmessage = (event) => {
     const job = JSON.parse(event.data);
@@ -423,6 +439,7 @@ function connectEvents(jobId) {
     renderJobs();
     if (["succeeded", "partial", "failed", "cancelled", "interrupted"].includes(job.status)) {
       source.close();
+      state.eventSources.delete(job.id);
       if (["succeeded", "partial"].includes(job.status)) toast(job.status === "partial" ? "途中状態を保存しました" : "動画が完成しました");
       else if (job.status === "failed") toast(job.error || "生成に失敗しました", "error");
       refreshJobs();
@@ -430,6 +447,7 @@ function connectEvents(jobId) {
   };
   source.onerror = () => {
     source.close();
+    state.eventSources.delete(jobId);
     setTimeout(() => refreshJobs(), 1200);
   };
 }
@@ -464,7 +482,7 @@ function renderLive(job) {
     .replace("pdd_sage", "PDD 8-Step + Sage")
     .replace("pdd", "PDD 8-Step")
     .replace("fast_sage_detail", "高速・画質優先")
-    .replace("fast_sage", "最速")
+    .replace("fast_sage", "速度優先")
     .replace("fast", "Fast SDPA")
     .replace("quality", "Quality");
   $$("#stageList span").forEach((span) => span.classList.toggle("done", progress >= Number(span.dataset.threshold)));
@@ -489,7 +507,17 @@ async function refreshJobs() {
     const payload = await api("/api/jobs?limit=200");
     state.jobs = payload.jobs;
     renderJobs();
-    const live = state.jobs.find((job) => ["running", "stopping", "cancelling", "queued"].includes(job.status));
+    const activeJobs = state.jobs.filter((job) => ["running", "stopping", "cancelling", "queued"].includes(job.status));
+    activeJobs.forEach((job) => {
+      if (!state.eventSources.has(job.id)) connectEvents(job.id);
+    });
+    for (const [jobId, source] of state.eventSources) {
+      if (!activeJobs.some((job) => job.id === jobId)) {
+        source.close();
+        state.eventSources.delete(jobId);
+      }
+    }
+    const live = activeJobs[0];
     if (live && state.activeJobId !== live.id) {
       state.activeJobId = live.id;
       renderLive(live);
@@ -516,10 +544,14 @@ function jobRow(job, index) {
   const prompt = job.request?.prompt || "生成結果";
   const profile = job.request?.profile || job.plan?.request?.attention_backend || "history";
   const action = ["succeeded", "partial"].includes(job.status) ? "見る" : ["running", "queued", "stopping"].includes(job.status) ? "詳細" : "ログ";
+  const gpuLabel = job.assigned_gpu_name
+    ? `GPU ${job.assigned_gpu_index ?? "?"} · ${job.assigned_gpu_name}`
+    : (job.request?.effective_gpu_device || job.request?.gpu_device || "Auto");
   return `<article class="job-row" data-job="${job.id}">
     <div class="job-index">${String(index + 1).padStart(2,"0")}</div>
     <div class="job-main"><b>${escapeHTML(prompt)}</b><small>${escapeHTML(job.stage)} · ${escapeHTML(job.detail)}</small><div class="mini-progress"><progress max="100" value="${Number(job.progress || 0)}"></progress></div></div>
     <div class="job-stat"><span>STATUS</span><b>${statusLabels[job.status] || job.status}</b></div>
+    <div class="job-stat"><span>GPU</span><b>${escapeHTML(gpuLabel)}</b></div>
     <div class="job-stat"><span>PROFILE</span><b>${escapeHTML(profile)}</b></div>
     <button class="job-action" data-open-job="${job.id}">${action}</button>
   </article>`;
@@ -548,12 +580,13 @@ function renderLibrary() {
       : success ? "動画ファイルがありません" : "生成ログを確認";
     const frames = request.frames || "—";
     const size = request.width && request.height ? `${request.width}×${request.height}` : "—";
+    const gpu = job.assigned_gpu_name ? `GPU ${job.assigned_gpu_index ?? "?"} · ${job.assigned_gpu_name}` : "Auto";
     return `<article class="library-card ${job.status}" data-open-job="${job.id}">
       <button type="button" class="library-card-delete" data-delete-job="${job.id}" aria-label="この生成を削除">削除</button>
       <div class="library-video">${video}</div>
       <div class="card-body"><div class="card-meta"><span>${statusLabels[job.status]}</span><time>${compactDate(job.created_at)}</time></div>
       <h3>${escapeHTML(request.prompt || "過去の生成結果")}</h3>
-      <div class="card-specs"><span><b>${size}</b></span><span><b>${frames}</b> frames</span><span><b>${clock(job.duration_seconds)}</b></span></div></div>
+      <div class="card-specs"><span><b>${size}</b></span><span><b>${frames}</b> frames</span><span><b>${clock(job.duration_seconds)}</b></span><span title="${escapeHTML(gpu)}"><b>${escapeHTML(gpu)}</b></span></div></div>
     </article>`;
   }).join("");
 }
@@ -644,6 +677,10 @@ function renderSettings(settings, readiness, openai = state.bootstrap?.openai) {
   $("#settingCache").value = settings.prompt_cache_dir || "";
   $("#settingPddCheckpoint").value = settings.pdd_checkpoint_path || "";
   $("#settingPddAffine").value = settings.pdd_adaln_affine_path || "";
+  $("#settingFastVideoModel").value = settings.fastvideo_model_path || "";
+  $("#settingFastVideoPython").value = settings.fastvideo_python_path || settings.python_path || "";
+  renderGpuSelectors(state.bootstrap?.hardware, settings.gpu_default_selector || "auto");
+  $("#settingGpuParallel").value = String(settings.gpu_parallel_jobs || 1);
   $("#settingOpenAIModel").value = openai?.model || "gpt-5.6-terra";
   // Never hydrate a secret back into the DOM.  The status only exposes the
   // configured/source state returned by the server.
@@ -659,6 +696,28 @@ function renderSettings(settings, readiness, openai = state.bootstrap?.openai) {
   $(".engine-pill").classList.toggle("ready", ready);
 }
 
+function renderGpuSelectors(hardware, defaultSelector = "auto") {
+  const devices = Array.isArray(hardware?.gpus) ? hardware.gpus : [];
+  const options = [
+    { value: "auto", label: "Auto · 空きGPUを選択" },
+    ...devices.map((gpu) => ({
+      value: gpu.uuid || String(gpu.index),
+      label: gpu.h3_eligible
+        ? (gpu.auto_assignable === false
+          ? `GPU ${gpu.index} · ${gpu.name} · index指定のみ（UUIDなし）`
+          : `GPU ${gpu.index} · ${gpu.name} · ${bytes(gpu.vram_total_bytes)}`)
+        : `GPU ${gpu.index} · ${gpu.name} · 対象外（${gpu.eligibility_reason || "H3非対応"}）`,
+      disabled: gpu.h3_eligible === false,
+    })),
+  ];
+  [$("#gpuDevice"), $("#settingGpuDefault")].forEach((select) => {
+    if (!select) return;
+    const wanted = defaultSelector;
+    select.innerHTML = options.map((option) => `<option value="${escapeHTML(option.value)}"${option.disabled ? " disabled" : ""}>${escapeHTML(option.label)}</option>`).join("");
+    select.value = options.some((option) => option.value === wanted) ? wanted : "auto";
+  });
+}
+
 function modelAssetStatus(asset) {
   if (asset.status === "downloading" || asset.download_status === "downloading") return "downloading";
   if (asset.status === "invalid") return "invalid";
@@ -670,14 +729,21 @@ function modelAssetStatus(asset) {
 }
 
 function modelAssetStatusLabel(asset, status) {
-  if (status === "ready") return asset.verified || asset.status === "verified" ? "検証済み・使用可能" : "ファイルあり（未検証）";
+  if (status === "ready") {
+    if (asset.execution_supported === false) return "検証済み・HAYATE生成は未対応（外部ランタイム用）";
+    if (asset.experimental) return "検証済み・実験経路（別ランタイム）";
+    return asset.verified || asset.status === "verified" ? "検証済み・使用可能" : "ファイルあり（未検証）";
+  }
   if (status === "downloading") {
     const progress = asset.progress ?? asset.download_progress;
     return Number.isFinite(Number(progress)) ? `ダウンロード中… ${Math.round(Number(progress))}%` : "ダウンロード中…";
   }
   if (status === "invalid") return "既存ファイルのサイズが一致しません。削除・配置を確認してください";
   if (status === "retry") return asset.error || asset.message || "取得に失敗しました。再試行できます";
-  if (status === "present") return "ファイルあり・SHA-256検証が必要です";
+  if (status === "present") {
+    if (asset.execution_supported === false) return "ファイルあり・ヘッダー診断と完全性検証のみ（HAYATE生成は未対応）";
+    return asset.experimental ? "ファイルあり・FastH3診断が必要です" : "ファイルあり・SHA-256検証が必要です";
+  }
   return asset.downloadable === false ? "未配置・公開元を確認して手動配置" : "未配置";
 }
 
@@ -710,11 +776,14 @@ function renderModelSetup(payload) {
     const actionLabel = status === "ready" ? "準備済み" : status === "present" ? "検証" : status === "downloading" ? "取得中…" : status === "invalid" ? "要確認" : status === "retry" ? "再試行" : asset.downloadable === false ? "手動配置" : "ダウンロード";
     const progress = status === "downloading" && Number.isFinite(Number(asset.progress ?? asset.download_progress))
       ? `<div class="model-progress"><span style="width:${Math.max(0, Math.min(100, Number(asset.progress ?? asset.download_progress)))}%"></span></div>` : "";
-    return `<article class="model-asset" data-model-id="${escapeHTML(asset.id || "")}">
+    const notes = Array.isArray(asset.notes) && asset.notes.length
+      ? `<span class="model-asset-note">${escapeHTML(asset.notes.join(" / "))}</span>` : "";
+    const experimental = asset.experimental ? `<span class="model-asset-experimental">EXPERIMENTAL</span>` : "";
+    return `<article class="model-asset${asset.experimental ? " experimental" : ""}" data-model-id="${escapeHTML(asset.id || "")}">
       <div class="model-asset-main">
-        <div class="model-asset-title"><span class="model-asset-role">${escapeHTML(role)}</span><b title="${escapeHTML(filename)}">${escapeHTML(asset.label || filename)}</b></div>
+        <div class="model-asset-title"><span class="model-asset-role">${escapeHTML(role)}</span>${experimental}<b title="${escapeHTML(filename)}">${escapeHTML(asset.label || filename)}</b></div>
         <span class="model-asset-meta" title="${escapeHTML(path)}">${escapeHTML(filename)} · ${escapeHTML(size)}${provenance ? ` · ${provenance}` : ""}</span>
-        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${progress}
+        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${notes}${progress}
       </div>
       <button type="button" class="model-asset-action" data-model-download="${escapeHTML(asset.id || "")}" ${canDownload ? "" : "disabled"}>${actionLabel}</button>
     </article>`;
@@ -725,6 +794,89 @@ function renderModelSetup(payload) {
   } else if (!active && state.modelTimer) {
     clearInterval(state.modelTimer);
     state.modelTimer = null;
+  }
+}
+
+function renderFastH3Status(payload) {
+  const element = $("#fastH3Status");
+  if (!element) return;
+  if (!payload) {
+    element.className = "fasth3-status";
+    element.textContent = "未診断";
+    return;
+  }
+  const lines = [];
+  const checkpoint = payload.checkpoint || {};
+  if (checkpoint.exists) {
+    lines.push(`チェックポイント: ${checkpoint.detected ? "VSA形式を検出" : "形式を確認できません"} · ${bytes(checkpoint.file_size)}`);
+  } else {
+    lines.push("チェックポイント: 未配置（ダウンロードは手動で開始できます）");
+  }
+  const runtime = payload.runtime || {};
+  lines.push(`FastVideo runtime: ${runtime.available ? "検出済み" : "未検出"}`);
+  if (Array.isArray(runtime.gpu_names) && runtime.gpu_names.length) {
+    const caps = Array.isArray(runtime.gpu_capabilities) ? runtime.gpu_capabilities : [];
+    lines.push(`GPU: ${runtime.gpu_names.map((name, index) => `${name}${caps[index] ? ` (sm_${String(caps[index]).replace(".", "")})` : ""}`).join(" / ")}`);
+  }
+  if (runtime.system_memory_bytes) lines.push(`WSL RAM: ${bytes(runtime.system_memory_bytes)}`);
+  if (payload.model_directory) lines.push(`モデルフォルダ: ${payload.model_directory}`);
+  if (payload.fastvideo_source_url) lines.push(`公式モデル: ${payload.fastvideo_source_url}`);
+  if (payload.fastvideo_revision) lines.push(`固定revision: ${payload.fastvideo_revision}`);
+  if (checkpoint.identity_verified === true) lines.push("Kijai単一ファイル: サイズ・構造・SHA-256を検証済み（外部ComfyUI用）");
+  else if (checkpoint.exists) lines.push("Kijai単一ファイル: 構造検出済みですが、HAYATE FastVideo入力には使用しません");
+  const checkpointIssues = Array.isArray(payload.checkpoint_issues) ? payload.checkpoint_issues : [];
+  if (checkpointIssues.length) lines.push(...checkpointIssues.map((item) => `・単一ファイル診断: ${item}`));
+  const issues = Array.isArray(payload.blocking_issues)
+    ? payload.blocking_issues
+    : (Array.isArray(payload.issues) ? payload.issues : []);
+  if (issues.length) lines.push(...issues.map((item) => `・${item}`));
+  else lines.push("公式FastVideoディレクトリとランタイムが利用可能です。FastH3専用経路を選択できます。");
+  const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+  if (warnings.length) lines.push(...warnings.map((item) => `・注意: ${item}`));
+  element.className = `fasth3-status ${payload.ready ? "ready" : "blocked"}`;
+  element.textContent = lines.join("\n");
+  const profile = $('input[name="profile"][value="fasth3"]');
+  if (profile) {
+    profile.disabled = !payload.ready;
+    if (!payload.ready && profile.checked) {
+      const fallback = $('input[name="profile"][value="fast_sage_detail"]');
+      if (fallback) fallback.checked = true;
+      applyProfile("fast_sage_detail");
+    }
+  }
+  const fastProfile = $('input[name="profile"][value="fasth3_fast"]');
+  if (fastProfile) {
+    fastProfile.disabled = payload.fast_profile_ready !== true;
+    fastProfile.closest(".profile-card").hidden = fastProfile.disabled;
+    if (fastProfile.disabled && fastProfile.checked) {
+      const fallback = $('input[name="profile"][value="fast_sage_detail"]');
+      if (fallback) fallback.checked = true;
+      applyProfile("fast_sage_detail");
+    }
+  }
+  if (Array.isArray(payload.fast_profile_issues) && payload.fast_profile_issues.length) {
+    lines.push(...payload.fast_profile_issues.map((item) => `・Blackwell最速条件: ${item}`));
+  } else if (payload.fast_profile_ready === true) {
+    lines.push("Blackwell最速プロファイル: 利用可能（sm100a VSA + FA4 + regional compile）");
+  }
+  element.textContent = lines.join("\n");
+}
+
+async function checkFastH3() {
+  const button = $("#checkFastH3");
+  if (!button) return;
+  button.disabled = true;
+  button.textContent = "診断中…";
+  try {
+    const payload = await api("/api/models/fasth3");
+    renderFastH3Status(payload);
+    toast(payload.ready ? "FastH3の利用条件を満たしています" : "FastH3はまだ利用条件を満たしていません", payload.ready ? "success" : "error");
+  } catch (error) {
+    renderFastH3Status({ ready: false, issues: [error.message] });
+    toast(error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "利用条件を診断";
   }
 }
 
@@ -798,6 +950,10 @@ async function saveSettings() {
     prompt_cache_dir: $("#settingCache").value.trim(),
     pdd_checkpoint_path: $("#settingPddCheckpoint").value.trim(),
     pdd_adaln_affine_path: $("#settingPddAffine").value.trim(),
+    fastvideo_model_path: $("#settingFastVideoModel").value.trim(),
+    fastvideo_python_path: $("#settingFastVideoPython").value.trim(),
+    gpu_default_selector: $("#settingGpuDefault").value || "auto",
+    gpu_parallel_jobs: Number($("#settingGpuParallel").value || 1),
     openai_model: $("#settingOpenAIModel").value.trim(),
     openai_api_key: $("#settingOpenAIKey").value.trim() || null,
     clear_openai_api_key: $("#clearOpenAIKey").checked,
@@ -813,16 +969,21 @@ async function saveSettings() {
 function renderHardware(hardware) {
   const gpu = hardware?.gpus?.find((item) => item.selected_for_inference) || hardware?.gpus?.[0];
   if (gpu) $("#gpuName").textContent = gpu.name;
+  renderGpuSelectors(hardware, state.bootstrap?.settings?.gpu_default_selector || "auto");
+  const gpuRows = (hardware?.gpus || []).map((item) => `<div class="hardware-item"><span>GPU ${item.index}${item.selected_for_inference ? " · primary" : ""}</span><b>${escapeHTML(item.name)}<br>${bytes(item.vram_total_bytes)}${item.uuid ? `<br><small>${escapeHTML(item.uuid)}</small>` : ""}</b></div>`).join("");
   $("#hardwarePanel").innerHTML = `<h3>Hardware</h3>
     <div class="hardware-item"><span>CPU</span><b>${escapeHTML(hardware?.cpu || "—")}</b></div>
-    <div class="hardware-item"><span>Primary GPU</span><b>${escapeHTML(gpu?.name || "—")}<br>${bytes(gpu?.vram_total_bytes)}</b></div>
+    ${gpuRows || `<div class="hardware-item"><span>GPU</span><b>検出できません</b></div>`}
+    <div class="hardware-item"><span>GPU scheduling</span><b>${hardware?.auto_assignable_gpu_count ?? hardware?.eligible_gpu_count ?? 0} / ${hardware?.gpu_count || 0} auto-assignable<br>${hardware?.multi_gpu_supported ? "multi-GPU scheduling available" : "single-adapter"}</b></div>
     <div class="hardware-item"><span>PyTorch / CUDA</span><b>${escapeHTML(hardware?.pytorch_version || "—")}<br>CUDA ${escapeHTML(hardware?.pytorch_cuda_version || "—")}</b></div>`;
 }
 
 async function pollResources() {
   try {
     const resources = await api("/api/system");
-    const gpu = resources.gpus?.[0];
+    const activeJob = state.jobs.find((job) => job.id === state.activeJobId);
+    const gpu = resources.gpus?.find((item) => item.index === activeJob?.assigned_gpu_index)
+      || resources.gpus?.[0];
     if (gpu) {
       const percent = 100 * gpu.used_bytes / gpu.total_bytes;
       $("#vramText").textContent = `${bytes(gpu.used_bytes)} / ${bytes(gpu.total_bytes)}`;
@@ -902,6 +1063,7 @@ function bindEvents() {
   $("#prepareModelDirs").addEventListener("click", prepareModelDirs);
   $("#applyStandardPaths").addEventListener("click", applyStandardPaths);
   $("#refreshModelSetup").addEventListener("click", () => refreshModelSetup());
+  $("#checkFastH3").addEventListener("click", checkFastH3);
   $("#modelLicenseConsent").addEventListener("change", () => renderModelSetup(state.modelSetup));
   $("#modelAssetList").addEventListener("click", (event) => {
     const button = event.target.closest("[data-model-download]");
@@ -937,7 +1099,7 @@ async function initialize() {
   applyTheme(savedTheme(), false);
   bindEvents();
   $("#prompt").dispatchEvent(new Event("input"));
-  updateDuration(); updateResolution(); applyProfile("fast_sage");
+  updateDuration(); updateResolution(); applyProfile("fast_sage_detail");
   navigate(location.hash.slice(1) || "generate");
   try {
     const bootstrap = await api("/api/bootstrap");
@@ -950,8 +1112,10 @@ async function initialize() {
     await refreshModelSetup(true);
     renderHardware(bootstrap.hardware);
     renderJobs();
-    const live = state.jobs.find((job) => ["running", "stopping", "cancelling", "queued"].includes(job.status));
-    if (live) { state.activeJobId = live.id; renderLive(live); connectEvents(live.id); }
+    const activeJobs = state.jobs.filter((job) => ["running", "stopping", "cancelling", "queued"].includes(job.status));
+    activeJobs.forEach((job) => connectEvents(job.id));
+    const live = activeJobs[0];
+    if (live) { state.activeJobId = live.id; renderLive(live); }
     else renderLive(null);
     await pollResources();
     state.resourceTimer = setInterval(pollResources, 3000);

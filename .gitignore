@@ -16,3 +16,9 @@ upstream/h3/
 data/webui/
 .playwright-cli/
 output/playwright/
+
+.cache/
+data/
+inputs/
+colab-webui-bundle.zip
+.fasth3-venv/

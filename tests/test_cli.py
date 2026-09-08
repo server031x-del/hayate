@@ -24,6 +24,41 @@ def test_webui_defaults_to_lan_bind_with_loopback_opt_out():
     assert vpn.trusted_client_network == ["10.8.0.0/24"]
 
 
+def test_hardware_neutral_profile_and_gpu_aliases_are_available():
+    args = build_parser().parse_args(
+        [
+            "generate",
+            "--prompt",
+            "test",
+            "--ckpt-dir",
+            "checkpoint",
+            "--output",
+            "output.mp4",
+            "--fast",
+            "--gpu",
+            "cuda:1",
+        ]
+    )
+    assert args.rtx3060_fast is True
+    assert args.gpu_device == "cuda:1"
+
+
+def test_fasth3_profile_is_explicit_and_uses_model_directory_argument():
+    args = build_parser().parse_args(
+        [
+            "generate",
+            "--prompt",
+            "test",
+            "--ckpt-dir",
+            "models/fastvideo",
+            "--output",
+            "output.mp4",
+            "--fasth3",
+        ]
+    )
+    assert args.fasth3 is True
+
+
 def test_cli_startup_and_inspect(tmp_path, capsys):
     model = write_dummy_safetensors(tmp_path / "audio.safetensors", [("weight", "F32", [2])], {})
     config = tmp_path / "models.yaml"

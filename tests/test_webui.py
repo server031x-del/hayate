@@ -73,6 +73,18 @@ def test_web_profiles_use_shared_validated_values():
     assert pdd["easycache"] is False
     assert pdd["attention_backend"] == "sdpa"
 
+    fast_h3 = _profile_values(GenerationPayload(prompt="test", profile="fasth3_fast"))
+    assert fast_h3["steps"] == 5
+    assert fast_h3["easycache"] is False
+
+
+def test_webui_bootstrap_advertises_fast_h3_profiles(tmp_path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        profiles = client.get("/api/bootstrap").json()["profiles"]
+    assert profiles["fasth3"]["steps"] == 5
+    assert profiles["fasth3_fast"]["steps"] == 5
+
 
 def test_prompt_transform_metadata_is_explicit_and_optional():
     plain = GenerationPayload(prompt="plain")

@@ -42,10 +42,11 @@ The affine map and PDD/model weights are downloaded separately and retain their
 source terms, including the MiniMax-H3 Community License Agreement where
 applicable.
 
-The optional Windows SageAttention profile uses
-[`woct0rdho/SageAttention`](https://github.com/woct0rdho/SageAttention) 2.2.0
-post4, derived from [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention),
-under Apache-2.0. Its optional Triton runtime is
+The optional Windows SageAttention profile uses the 2.2.0 Windows post5
+cu130/torch2.10+ wheel from
+[`woct0rdho/SageAttention`](https://github.com/woct0rdho/SageAttention), derived
+from [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention), under
+Apache-2.0. Its optional Triton runtime is
 [`woct0rdho/triton-windows`](https://github.com/woct0rdho/triton-windows),
 distributed under the MIT license. HAYATE calls these installed packages and
 does not copy their sources.
@@ -54,3 +55,29 @@ The optional local WebUI calls FastAPI (MIT), Starlette (BSD-3-Clause), Uvicorn
 (BSD-3-Clause), python-multipart (Apache-2.0), and Pillow (HPND) as installed
 Python dependencies. HAYATE's WebUI HTML, CSS, and JavaScript are original
 project sources and do not vendor a third-party UI framework.
+
+The optional FastH3/VSA catalog entry references
+[`Kijai/MiniMax-H3-experimental`](https://huggingface.co/Kijai/MiniMax-H3-experimental).
+The 4-step file is a ComfyUI single-file conversion and is not redistributed by
+HAYATE; its MiniMax-H3 model terms remain applicable. If the optional FastVideo
+backend is installed by an operator, its source and Apache-2.0 notices come from
+[`hao-ai-lab/FastVideo`](https://github.com/hao-ai-lab/FastVideo). HAYATE does
+not vendor FastVideo or the VSA kernels, and the experimental path is disabled
+when those external runtime requirements are absent.
+
+The optional ComfyUI FastH3 VSA node is derived from
+[`barelymining/ComfyUI-MiniMax-H3-FastVideo`](https://github.com/barelymining/ComfyUI-MiniMax-H3-FastVideo)
+at commit `be8f1ef72e3dc430c005e10923c2a0863aa6a9e8` and is distributed under
+the MIT license. It calls the separately installed `vsa` 0.0.3 package from
+[`hao-ai-lab/FastVideo`](https://github.com/hao-ai-lab/FastVideo), distributed
+under Apache-2.0. The vendored node files retain their upstream license and
+README; HAYATE-specific changes are documented in the source history. Model
+weights remain external and keep the MiniMax-H3 Community License terms.
+
+The HAYATE FastH3 setup helper pins the external model snapshot
+`FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree` at revision
+`5ea076f35b84da4c3c82217112fa733d8eea2ae1`. The snapshot is a 35B BF16
+Diffusers-format model distributed under the MiniMax H3 Community License;
+the model's license and acceptable-use terms remain the operator's
+responsibility. The pinned revision and its required directory contract are
+documented in `docs/FASTH3_WSL.md`.

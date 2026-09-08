@@ -13,16 +13,48 @@ import psutil
 
 
 class GPULease:
-    """Cross-process advisory lease for HAYATE's single inference GPU."""
+    """Cross-process advisory lease for one HAYATE inference resource.
 
-    def __init__(self, path: Path | None = None, *, owner: dict | None = None):
+    A GPU UUID creates a dedicated lock, allowing independent adapters to run
+    concurrently while still preventing CLI/WebUI collisions on the same
+    physical device.  The historical ``HAYATE_GPU_LEASE_PATH`` override and
+    the global fallback remain supported for CPU tests and legacy callers.
+    """
+
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        owner: dict | None = None,
+        gpu_id: str | None = None,
+        namespace: str = "scheduler",
+    ):
         configured = os.environ.get("HAYATE_GPU_LEASE_PATH")
-        selected = path or (Path(configured) if configured else None)
+        # The legacy override is intentionally global.  It is useful for
+        # sandboxes/tests and remains an explicit escape hatch for operators
+        # who want to serialize scheduler processes, even when a GPU UUID is
+        # available.  Runtime leases stay UUID-scoped so a scheduler lease in
+        # the same process never collides with its child-runtime probe.
+        selected = path or (
+            Path(configured)
+            if configured and (not gpu_id or namespace == "scheduler")
+            else None
+        )
+        if selected is None and gpu_id:
+            digest = hashlib.sha256(gpu_id.encode("utf-8", errors="replace")).hexdigest()[:16]
+            selected = Path(tempfile.gettempdir()) / f"hayate-gpu-{namespace}-{digest}.lock"
+        elif selected is None and namespace != "scheduler":
+            selected = Path(tempfile.gettempdir()) / f"hayate-gpu-{namespace}.lock"
         self.path = (
             selected or Path(tempfile.gettempdir()) / "hayate-gpu0.lock"
         ).resolve(strict=False)
         self.owner_path = self.path.with_suffix(self.path.suffix + ".owner.json")
-        self.owner = owner or self._default_owner()
+        self.gpu_id = gpu_id
+        self.namespace = namespace
+        self.owner = {
+            **(owner or self._default_owner()),
+            **({"gpu_id": gpu_id, "lease_namespace": namespace} if gpu_id else {"lease_namespace": namespace}),
+        }
         self._handle: BinaryIO | None = None
 
     @staticmethod
@@ -112,7 +144,7 @@ class GPULease:
         if not self.acquire():
             owner = self.busy_owner() or {}
             raise RuntimeError(
-                f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})"
+                f"選択したGPUはHAYATEで使用中です (pid={owner.get('pid', '?')})"
             )
         return self
 

@@ -38,3 +38,26 @@ end-to-end result is recorded in `docs/EXECUTION_VALIDATION.md`. Use
 Invoke the profile through `uv run --no-sync hayate ...` or the venv's
 `hayate.exe`; a normal exact environment sync does not know about this
 platform-specific wheel unless it is added to the project dependency set.
+
+## ComfyUI H3 VSA Turbo profile
+
+The separate Kijai ComfyUI runtime uses a CUDA 13 build and a newer Windows
+wheel than the HAYATE-native profile above:
+
+- Runtime: `M:\Project\HAYATE-ComfyUI\.venv`
+- PyTorch: `2.11.0+cu130`
+- Triton: `triton-windows==3.6.0.post26`
+- SageAttention: 2.2.0 Windows `post5`, `cu130torch2.10.0andhigher`
+- ComfyUI: Kijai `vsa` branch, commit `10febb01d7be73d1491cf5e5347b5ab8b6c2c09e`
+
+The packages were imported and exercised on the RTX 3060. Start the shared
+model runtime with:
+
+```powershell
+.\scripts\start_comfyui_hayate.ps1 -EnableTurbo
+```
+
+This is an external-ComfyUI path and does not change the native HAYATE
+`--fast-sage` profile or its SDPA fidelity reference. See
+[`COMFYUI_HAYATE.md`](COMFYUI_HAYATE.md) for the shared model paths and the
+end-to-end VSA timings.

@@ -24,7 +24,7 @@ maybleMyers/h3 MiniMax-H3 engine
 | Attention dispatch | `minimax_video/attention.py`, `sol_attn/` | **MODIFY / EXTEND** | Keep upstream dispatch semantics. Add measured consumer-GPU choices only behind capability checks and benchmark gates. Preserve Sol-Attn notices if redistributed. |
 | Block swap | `transformer.py`, `modules/custom_offloading_utils.py` | **MODIFY / EXTEND** | Keep block-loop hooks and ordering. Add HAYATE budgets, telemetry, RTX 3060 policy, and later NVMe tier without changing transformer math. |
 | Progressive block loading | `minimax_video/progressive_load.py` | **MODIFY / EXTEND** | Reuse gate/ordering design. Add explicit stage ownership, RAM budgets, cancellation, and benchmark events. |
-| CPU/GPU offload | `custom_offloading_utils.py`, `diffusers-mm` integration | **MODIFY / EXTEND** | Wrap behind HAYATE memory policy. Do not assume two GPUs form one memory pool. v0.1 selects RTX 3060 only for execution. |
+| CPU/GPU offload | `custom_offloading_utils.py`, `diffusers-mm` integration | **MODIFY / EXTEND** | Wrap behind HAYATE memory policy. Do not assume two GPUs form one memory pool. HAYATE selects an eligible physical GPU by UUID and keeps the conservative one-worker default. |
 | Existing checkpoint/model loader | `minimax_video/model_loader.py` | **REPLACE / EXTEND** | Retain upstream component construction and single-file conversion contracts, but route files through HAYATE inspection/validation and add direct W4A8, NVFP4/AWQ, and ConvRot loaders. |
 | Existing INT8 infrastructure | `minimax_video/int8_quant.py` | **MODIFY / EXTEND** | Reuse documented ConvRot marker/key conventions and fast INT8 path where applicable. The audited Video VAE export quantizes 144 2D Linear weights; its convolutions remain FP32. |
 | Qwen3-VL conditioner | `conditioner.py`, `qwen3vl_text.py`, `qwen3vl_vision.py` | **MODIFY / EXTEND** | Preserve layer-50 conditioning and media-token rules. Extend the loader for NVFP4/AWQ and consumer-RAM streaming. |
@@ -32,6 +32,7 @@ maybleMyers/h3 MiniMax-H3 engine
 | Prompt cache | `minimax_generate_video.py` | **MODIFY / EXTEND** | Preserve cache-key inputs and CPU-resident embeddings. HAYATE now adds schema/version/upstream/model/input fingerprints and atomic writes through a runtime override. |
 | Single-file overrides | `model_loader.py`, `conditioner.py`, `int8_quant.py` | **MODIFY / EXTEND** | Make single-file models first-class registry entries and validate headers before model allocation. |
 | Generation CLI | `minimax_generate_video.py` | **REUSE / WRAP** | HAYATE launches the pinned external entry point, installs only quantized-loader overrides, and forwards generation arguments. Pipeline/scheduler/packing/denoise/decode remain upstream-owned. |
+| FastH3/VSA preview adapter | external `hao-ai-lab/FastVideo` API; Kijai single-file conversion | **REUSE / WRAP (experimental)** | Keep FastVideo's VSA attention, 4-forward schedule, and component loader external. HAYATE only validates the checkpoint contract, exposes an opt-in launcher, and rejects the Kijai ComfyUI single file unless a compatible FastVideo directory/runtime is configured. |
 | Job queue and worker | `wan_job_queue.py`, `wan_worker.py` | **REUSE / WRAP** | Reuse persistent sequential-job semantics when generation is enabled. No GUI or worker is required in v0.1. |
 | Hardware profiler | none | **ADD** | CPU, RAM, CUDA driver, GPU, compute capability, PyTorch, and runtime detection without importing models. |
 | Safetensors inspector | limited private header reader in `int8_quant.py` | **ADD** | Bounded, metadata-only parser with corruption checks, tensor inventory, physical byte estimates, and evidence-based quantization detection. |
@@ -39,7 +40,7 @@ maybleMyers/h3 MiniMax-H3 engine
 | Stage runtime | staged functions in generation CLI | **ADD** | General stage lifecycle and resource-release API, while preserving the upstream A/B/C/D ordering. |
 | Consumer GPU memory manager | no standalone public API | **ADD** | RAM/VRAM snapshots, peaks, budgets, and future GPU/RAM/NVMe tiers. |
 | Benchmark framework | ad-hoc timers/logs | **ADD** | Structured stage timings, memory peaks, JSON output, and before/after comparison fields. |
-| RTX 3060 / 32 GB policy | none | **ADD** | Main-GPU selection, conservative compatibility checks, and stage residency policy. GTX 1660 SUPER is detected but not scheduled in v0.1. |
+| Consumer GPU / host-RAM policy | none | **ADD** | UUID-based physical-GPU selection, SM/loader compatibility checks, conservative stage residency, and an optional one-worker-per-GPU scheduler. Historical RTX 3060 / 32 GB measurements remain validation data, not a hardware restriction. |
 | Future NVMe streaming | none | **ADD (interface only)** | Reserve a storage-tier interface; no NVMe streaming implementation in v0.1. |
 | Gradio UI, interpolation, upscale, SeedVR | `h3.py`, `GIMM-VFI/`, `modules/SeedVR/` | **REPLACE / EXCLUDE** | Outside HAYATE v0.1 and not a runtime dependency. GIMM-VFI is non-commercial-only unless separately licensed. |
 

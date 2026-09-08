@@ -10,6 +10,7 @@ real-layer kernels, decode, and end-to-end generation.
 | Qwen3-VL NVFP4/AWQ | `Comfy-Org/MiniMax-H3/text_encoders` | 231,400 | 2,054 | F32 351, BF16 651, F8_E4M3 350, I8 1, U8 701 |
 | Video VAE INT8 ConvRot | `Kijai/MiniMax-H3-experimental` | 99,672 | 850 | F32 562, I8 144, U8 144 |
 | Audio VAE FP32 | `Comfy-Org/MiniMax-H3/vae` | 105,520 | 917 | F32 917 |
+| FastH3 VSA DataFree 4-Step INT8 ConvRot | `Kijai/MiniMax-H3-experimental` | 115,120 | 1,082 | INT8/FP32/U8 mixed; 50 VSA gate groups |
 
 ## Qwen3-VL NVFP4/AWQ evidence
 
@@ -77,6 +78,26 @@ All 917 tensors use F32. The public single file contains merged `.weight`
 parameters, while upstream constructs 172 legacy weight-normalized modules.
 HAYATE removes those parametrizations before strict assignment; the full model
 loaded in `3.67 s`, at `1.29 GB` RSS, with no meta tensors.
+
+## FastH3 VSA evidence and boundary
+
+The current Kijai artifact is pinned in the WebUI catalog at revision
+`f4cac997f880e93cf6940af61ee8d58ef31ff7f7`, size `22,898,594,920` bytes, and
+SHA-256
+`7221ae65d78780354d51e5048d29728d9f1f8fb9baf50b1dd3df85f5101413d`. Its
+header has the ComfyUI fused `blocks.*.attn.qkv_proj` / `out_proj` layout,
+`to_gate_compress` VSA-gate weights, INT8 weights, and `.comfy_quant` markers.
+There is no top-level metadata that would make it a normal HAYATE W4A8 file.
+
+HAYATE therefore exposes header-only inspection and an explicit FastH3
+preflight, but never routes this file through `W4A8Loader` or silently disables
+the gate. The linked file is a single-file ComfyUI conversion; the official
+FastVideo component loader expects a directory with model/config files. HAYATE
+execution uses the separate
+[`FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree`](https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree)
+snapshot (the older `FastVideo-Minimax-FastH3-Preview-v0.2` directory remains
+compatible) when its external runtime is configured. The current preview
+contract is T2VA; no I2V/FL2VA quality claim is made.
 
 ## Sources and model terms
 

@@ -23,7 +23,22 @@ from hayate.backends.minimax_h3.generation import (
     generation_artifact_paths,
     write_generation_manifest,
 )
+from hayate.runtime.gpu_devices import (
+    AUTO_GPU,
+    GPUDevice,
+    allowed_gpu_devices,
+    discover_gpu_devices,
+    eligible_gpu_devices,
+    normalize_gpu_selector,
+    resolve_gpu_selector,
+)
 from hayate.runtime.gpu_lease import GPULease
+
+BLACKWELL_FASTVIDEO_CAPABILITIES = frozenset({"10.0", "10.3"})
+FAST_PROFILE_MIN_VRAM_BYTES = 80 * 1024**3
+from hayate.backends.minimax_h3.runtime_command import (
+    update_runtime_command_environment,
+)
 from hayate.webui.progress import H3ProgressParser
 
 FINAL_STATUSES = {"succeeded", "partial", "failed", "cancelled", "interrupted"}
@@ -52,6 +67,12 @@ class JobStore:
             "log_path",
             "error",
             "pid",
+            "requested_gpu_selector",
+            "assigned_gpu_uuid",
+            "assigned_gpu_index",
+            "assigned_gpu_name",
+            "assigned_gpu_compute_capability",
+            "assigned_at",
         }
     )
 
@@ -99,10 +120,30 @@ class JobStore:
                     output_path TEXT,
                     log_path TEXT,
                     error TEXT,
-                    pid INTEGER
+                    pid INTEGER,
+                    requested_gpu_selector TEXT,
+                    assigned_gpu_uuid TEXT,
+                    assigned_gpu_index INTEGER,
+                    assigned_gpu_name TEXT,
+                    assigned_gpu_compute_capability TEXT,
+                    assigned_at TEXT
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            for name, definition in (
+                ("requested_gpu_selector", "TEXT"),
+                ("assigned_gpu_uuid", "TEXT"),
+                ("assigned_gpu_index", "INTEGER"),
+                ("assigned_gpu_name", "TEXT"),
+                ("assigned_gpu_compute_capability", "TEXT"),
+                ("assigned_at", "TEXT"),
+            ):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS jobs_created_at ON jobs(created_at DESC)"
             )
@@ -246,6 +287,9 @@ class JobStore:
                 output.stat().st_mtime, tz=timezone.utc
             ).isoformat()
             returncode = manifest.get("returncode", 0)
+            assignment = manifest.get("gpu_assignment") or {}
+            if not isinstance(assignment, dict):
+                assignment = {}
             self.create(
                 {
                     "id": job_id,
@@ -266,6 +310,12 @@ class JobStore:
                     "log_path": str(log_path.resolve(strict=False)),
                     "error": None if returncode == 0 else f"exit code {returncode}",
                     "pid": None,
+                    "requested_gpu_selector": request.get("gpu_device", AUTO_GPU),
+                    "assigned_gpu_uuid": assignment.get("uuid"),
+                    "assigned_gpu_index": assignment.get("index"),
+                    "assigned_gpu_name": assignment.get("name"),
+                    "assigned_gpu_compute_capability": assignment.get("compute_capability"),
+                    "assigned_at": timestamp if assignment else None,
                 }
             )
             imported += 1
@@ -273,19 +323,42 @@ class JobStore:
 
 
 class JobManager:
-    """Single-GPU FIFO executor with persisted progress and owned-process cancellation."""
+    """GPU-aware executor with persisted progress and owned-process cancellation.
 
-    def __init__(self, store: JobStore):
+    The default remains one worker because H3's CPU-offloaded weights can
+    consume most of a consumer host's RAM.  Setting ``worker_count`` above
+    one enables one child process per physical GPU; each child sees its chosen
+    adapter as ``cuda:0`` via a UUID mask, so H3 itself remains untouched.
+    """
+
+    def __init__(
+        self,
+        store: JobStore,
+        *,
+        worker_count: int = 1,
+        gpu_discovery=discover_gpu_devices,
+    ):
         self.store = store
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._plans: dict[str, GenerationPlan] = {}
         self._active: dict[str, subprocess.Popen[str]] = {}
+        self.worker_count = max(1, min(8, int(worker_count)))
+        self._gpu_discovery = gpu_discovery
         self._lock = threading.RLock()
         self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._worker, name="hayate-webui-worker", daemon=True
-        )
-        self._thread.start()
+        self._workers = [
+            threading.Thread(
+                target=self._worker,
+                name=f"hayate-webui-worker-{index + 1}",
+                daemon=True,
+            )
+            for index in range(self.worker_count)
+        ]
+        # Kept as a compatibility alias for integrations that inspected the
+        # old single worker during v0.1.
+        self._thread = self._workers[0]
+        for worker in self._workers:
+            worker.start()
 
     def submit(self, plan: GenerationPlan, request_payload: dict) -> dict:
         if not plan.executable:
@@ -312,6 +385,12 @@ class JobManager:
             "log_path": str(log_path),
             "error": None,
             "pid": None,
+            "requested_gpu_selector": plan.request.gpu_device,
+            "assigned_gpu_uuid": None,
+            "assigned_gpu_index": None,
+            "assigned_gpu_name": None,
+            "assigned_gpu_compute_capability": None,
+            "assigned_at": None,
         }
         self.store.create(job)
         with self._lock:
@@ -440,6 +519,159 @@ class JobManager:
                 continue
             self._run(job_id, plan)
 
+    def _gpu_candidates(
+        self,
+        plan: GenerationPlan,
+        environment: dict[str, str],
+    ) -> tuple[list[GPUDevice | None], str | None]:
+        """Return candidate physical GPUs and an optional validation error."""
+
+        try:
+            selector = normalize_gpu_selector(plan.request.gpu_device)
+        except ValueError as exc:
+            return [], str(exc)
+        require_blackwell = (
+            plan.backend == "fastvideo_vsa"
+            and environment.get("HAYATE_FASTH3_REQUIRE_BLACKWELL") == "1"
+        )
+
+        def eligible_for_plan(device: GPUDevice) -> bool:
+            return (
+                not require_blackwell
+                or (
+                    str(device.compute_capability) in BLACKWELL_FASTVIDEO_CAPABILITIES
+                    and device.vram_total_bytes >= FAST_PROFILE_MIN_VRAM_BYTES
+                )
+            )
+
+        def blackwell_issue() -> str:
+            return "FastH3最速プロファイルには80 GiB以上のVRAMを持つBlackwell（compute capability 10.0/10.3）が必要です"
+
+        # An explicit plan has already resolved the UUID during preflight. It
+        # must be honored even if the inventory changes between submit/run.
+        planned_uuid = environment.get("HAYATE_GPU_UUID") or ""
+        if planned_uuid:
+            devices = allowed_gpu_devices(
+                self._gpu_discovery(),
+                visible_devices=environment.get("CUDA_VISIBLE_DEVICES"),
+            )
+            selected = resolve_gpu_selector(planned_uuid, devices)
+            if selected is not None:
+                if not selected.h3_eligible:
+                    return [], f"selected GPU is not eligible for H3 W4A8: {selected.eligibility_reason}"
+                if not eligible_for_plan(selected):
+                    return [], blackwell_issue()
+                return [selected], None
+            if devices:
+                return [], "選択したGPUが現在のCUDA allow-listに含まれていません"
+            if require_blackwell:
+                return [], blackwell_issue()
+            # Keep the stable identity as a synthetic device so a transient
+            # nvidia-smi failure does not silently move the job elsewhere.
+            return [
+                GPUDevice(
+                    index=int(environment.get("HAYATE_GPU_INDEX") or -1),
+                    name="選択済みGPU",
+                    vram_total_bytes=0,
+                    uuid=planned_uuid,
+                )
+            ], None
+
+        devices = allowed_gpu_devices(
+            self._gpu_discovery(),
+            visible_devices=environment.get("CUDA_VISIBLE_DEVICES"),
+        )
+        if selector != AUTO_GPU:
+            selected = resolve_gpu_selector(selector, devices)
+            if selected is None:
+                return [], f"selected GPU was not found or is not allowed: {selector}"
+            if not selected.h3_eligible:
+                return [], f"selected GPU is not eligible for H3 W4A8: {selected.eligibility_reason}"
+            if not eligible_for_plan(selected):
+                return [], blackwell_issue()
+            return [selected], None
+        # No nvidia-smi (for example a CPU-only preflight test) keeps the
+        # historical global lease path and lets the child decide its device.
+        eligible = [device for device in eligible_gpu_devices(devices) if eligible_for_plan(device)]
+        if eligible:
+            return eligible, None
+        if devices:
+            if require_blackwell:
+                return [], blackwell_issue()
+            if any(device.h3_eligible for device in devices):
+                return [], "H3対応GPUのUUIDを取得できないため、自動割り当てできません。物理indexを明示してください"
+            return [], "H3 W4A8を自動割り当てできるSM 8.0以上のGPUがありません"
+        if require_blackwell:
+            return [], blackwell_issue()
+        return [None], None
+
+    def _acquire_gpu_lease(
+        self,
+        job_id: str,
+        plan: GenerationPlan,
+        environment: dict[str, str],
+    ) -> tuple[GPULease | None, GPUDevice | None, str | None]:
+        if self._stop.is_set():
+            return None, None, None
+        candidates, issue = self._gpu_candidates(plan, environment)
+        if issue:
+            return None, None, issue
+        has_physical_candidates = any(device is not None for device in candidates)
+        while not self._stop.is_set():
+            for device in candidates:
+                gpu_id = device.identity if device is not None else None
+                lease = GPULease(
+                    gpu_id=gpu_id,
+                    namespace="scheduler",
+                    owner={
+                        "pid": os.getpid(),
+                        "kind": "webui-generation",
+                        "job_id": job_id,
+                        "gpu_uuid": device.uuid if device is not None else None,
+                        "gpu_index": device.index if device is not None else None,
+                    },
+                )
+                if lease.acquire():
+                    if device is not None:
+                        # A child from a crashed parent may still own the
+                        # runtime namespace.  Probe it before committing to
+                        # an expensive Python/torch launch; otherwise the new
+                        # child would fail only after importing H3.
+                        runtime_probe = GPULease(
+                            gpu_id=gpu_id,
+                            namespace="runtime",
+                            owner={
+                                "pid": os.getpid(),
+                                "kind": "runtime-probe",
+                                "job_id": job_id,
+                            },
+                        )
+                        if not runtime_probe.acquire():
+                            lease.release()
+                            continue
+                        runtime_probe.release()
+                        # UUID masking prevents physical nvidia-smi indices
+                        # from being confused with PyTorch's visible ordinals.
+                        environment["CUDA_VISIBLE_DEVICES"] = device.visible_id
+                        environment["HAYATE_GPU_UUID"] = device.uuid or ""
+                        environment["HAYATE_GPU_INDEX"] = str(device.index)
+                        environment["HAYATE_GPU_RUNTIME_LEASE"] = "1"
+                    return lease, device, None
+            current = self.store.get(job_id) or {}
+            if current.get("status") != "queued":
+                return None, None, None
+            if has_physical_candidates:
+                # Requeue instead of pinning a worker to a busy explicit GPU;
+                # a later job may be able to use another adapter.
+                return None, None, "busy"
+            self.store.update(
+                job_id,
+                stage="GPU待機",
+                detail="空いているGPUの割り当てを待っています",
+            )
+            time.sleep(0.75)
+        return None, None, None
+
     def _run(self, job_id: str, plan: GenerationPlan) -> None:
         output = plan.request.output.resolve(strict=False)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -456,25 +688,61 @@ class JobManager:
         started = 0.0
         parser = H3ProgressParser()
         process: subprocess.Popen[str] | None = None
-        lease = GPULease(
-            owner={"pid": os.getpid(), "kind": "webui-generation", "job_id": job_id}
-        )
+        lease: GPULease | None = None
+        assigned_device: GPUDevice | None = None
         returncode = -1
         error: str | None = None
         try:
-            while not lease.acquire():
-                current = self.store.get(job_id) or {}
-                if current.get("status") != "queued" or self._stop.is_set():
-                    with self._lock:
-                        self._plans.pop(job_id, None)
+            lease, assigned_device, acquire_issue = self._acquire_gpu_lease(
+                job_id, plan, environment
+            )
+            if acquire_issue:
+                if acquire_issue == "busy":
+                    self.store.update(
+                        job_id,
+                        stage="GPU待機",
+                        detail="空いているGPUの割り当てを待っています",
+                    )
+                    if not self._stop.is_set() and (self.store.get(job_id) or {}).get("status") == "queued":
+                        time.sleep(0.15)
+                        self._queue.put(job_id)
                     return
-                owner = lease.busy_owner() or {}
+                error = acquire_issue
+                self.store.transition(
+                    job_id,
+                    {"queued"},
+                    status="failed",
+                    stage="エラー",
+                    detail="GPUを割り当てられませんでした",
+                    completed_at=_utc_now(),
+                    error=error,
+                )
+                return
+            if lease is None:
+                with self._lock:
+                    if self._stop.is_set():
+                        self.store.transition(
+                            job_id,
+                            {"queued"},
+                            status="interrupted",
+                            stage="中断",
+                            detail="WebUIを終了したため実行しませんでした",
+                            completed_at=_utc_now(),
+                        )
+                    self._plans.pop(job_id, None)
+                return
+            if assigned_device is not None:
                 self.store.update(
                     job_id,
-                    stage="GPU待機",
-                    detail=f"別のHAYATE処理の完了を待っています · PID {owner.get('pid', '?')}",
+                    detail=(
+                        f"GPU {assigned_device.index} · {assigned_device.name} を割り当てました"
+                    ),
+                    assigned_gpu_uuid=assigned_device.uuid,
+                    assigned_gpu_index=assigned_device.index,
+                    assigned_gpu_name=assigned_device.name,
+                    assigned_gpu_compute_capability=assigned_device.compute_capability,
+                    assigned_at=_utc_now(),
                 )
-                time.sleep(0.75)
             started = time.perf_counter()
             with self._lock:
                 if self._stop.is_set():
@@ -491,9 +759,23 @@ class JobManager:
                 if (self.store.get(job_id) or {}).get("status") != "queued":
                     self._plans.pop(job_id, None)
                     return
+                # FastVideo's WSL bridge serializes its allow-listed
+                # environment after ``/usr/bin/env`` in argv.  The scheduler
+                # selects a physical GPU immediately before spawning, so
+                # refresh that embedded assignment as well as Popen(env=...).
+                command = list(plan.command)
+                if plan.backend == "fastvideo_vsa":
+                    command = update_runtime_command_environment(
+                        command,
+                        environment,
+                        project_root=Path(__file__).resolve().parents[2],
+                    )
                 process = subprocess.Popen(
-                    list(plan.command),
-                    cwd=str(plan.upstream.checkout),
+                    command,
+                    cwd=str(
+                        plan.working_directory
+                        or (plan.upstream.checkout if plan.upstream is not None else Path.cwd())
+                    ),
                     env=environment,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -539,10 +821,14 @@ class JobManager:
         except (OSError, subprocess.SubprocessError) as exc:
             error = str(exc)
         finally:
-            lease.release()
+            if lease is not None:
+                lease.release()
 
         duration = time.perf_counter() - started
         runtime_metrics = parser.runtime_metrics
+        if assigned_device is not None:
+            runtime_metrics = dict(runtime_metrics or {})
+            runtime_metrics["gpu"] = assigned_device.to_dict()
         Path(str(output) + ".stop_decode").unlink(missing_ok=True)
         with self._lock:
             current = self.store.get(job_id) or {}
@@ -603,6 +889,7 @@ class JobManager:
             log_path=log_path,
             runtime_metrics=runtime_metrics,
             job_id=job_id,
+            gpu_assignment=assigned_device.to_dict() if assigned_device is not None else None,
         )
 
     def shutdown(self) -> None:
@@ -622,5 +909,7 @@ class JobManager:
             active = list(self._active)
         for job_id in active:
             self.cancel(job_id)
-        self._queue.put(None)
-        self._thread.join(timeout=8)
+        for _ in self._workers:
+            self._queue.put(None)
+        for worker in self._workers:
+            worker.join(timeout=8)

@@ -39,6 +39,16 @@ class ModelAsset:
     license: str
     license_url: str
     artifacts: tuple[ModelArtifact, ...]
+    # ``execution_backend`` is descriptive metadata for the WebUI catalog. It
+    # is deliberately not used to silently select a loader: experimental
+    # checkpoints must pass their own backend preflight first.
+    execution_backend: str = "mayble_h3"
+    experimental: bool = False
+    notes: tuple[str, ...] = ()
+    # Some upstream artifacts are registered for provenance/header auditing
+    # only (for example a ComfyUI single-file conversion).  Such an asset can
+    # still be downloaded and verified, but must never enable a HAYATE profile.
+    execution_supported: bool = True
 
     @property
     def size_bytes(self) -> int:
@@ -84,6 +94,31 @@ MODEL_ASSETS: tuple[ModelAsset, ...] = (
                 12_540_858_008,
                 "01aa7b92c007c599890461c325f9b7e3c96fb06c36f242f95b62f7f20e538dec",
             ),
+        ),
+    ),
+    ModelAsset(
+        "transformer_fastvideo_vsa_4step",
+        "transformer",
+        "MiniMax H3 FastH3 VSA DataFree 4-Step INT8 ConvRot（外部ComfyUI用）",
+        "Kijai/MiniMax-H3-experimental",
+        "f4cac997f880e93cf6940af61ee8d58ef31ff7f7",
+        MINIMAX_LICENSE,
+        MINIMAX_LICENSE_URL,
+        (
+            _artifact(
+                "minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors",
+                "minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors",
+                22_898_594_920,
+                "7221ae65d78780354d51e5048d29728d9f1f8fb9baf50b1dd3df85f5101413d",
+            ),
+        ),
+        execution_backend="external_comfyui_vsa",
+        experimental=True,
+        execution_supported=False,
+        notes=(
+            "ComfyUI単一ファイル形式。現行maybleMyers/h3 W4A8ローダーでは使用しません",
+            "HAYATEから直接生成する場合は公式FastVideoディレクトリ型スナップショットを別途配置します",
+            "このファイルはHAYATEではヘッダー診断・完全性確認のみ（外部ComfyUI/VSA用）",
         ),
     ),
     ModelAsset(
@@ -346,6 +381,7 @@ class ModelSetupService:
             self.models_root / "text_encoders",
             self.models_root / "vae",
             self.models_root / "lora",
+            self.models_root / "fastvideo",
         )
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
@@ -424,6 +460,10 @@ class ModelSetupService:
             "license": asset.license,
             "license_url": asset.license_url,
             "revision": asset.revision,
+            "execution_backend": asset.execution_backend,
+            "experimental": asset.experimental,
+            "execution_supported": asset.execution_supported,
+            "notes": list(asset.notes),
         }
         if latest_download:
             result.update(
@@ -452,6 +492,7 @@ class ModelSetupService:
                 "text_encoders": {"path": str(self.models_root / "text_encoders"), "exists": (self.models_root / "text_encoders").is_dir()},
                 "vae": {"path": str(self.models_root / "vae"), "exists": (self.models_root / "vae").is_dir()},
                 "lora": {"path": str(self.models_root / "lora"), "exists": (self.models_root / "lora").is_dir()},
+                "fastvideo": {"path": str(self.models_root / "fastvideo"), "exists": (self.models_root / "fastvideo").is_dir()},
             },
         }
 

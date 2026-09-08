@@ -21,6 +21,32 @@ class GPUInfo:
     compute_capability: str | None
     driver_version: str | None
     selected_for_inference: bool
+    # Physical identity is stable across CUDA visible-device reordering.  It
+    # is optional for older drivers and mocked nvidia-smi output.
+    uuid: str | None = None
+
+    @property
+    def h3_eligible(self) -> bool:
+        if not self.compute_capability:
+            return False
+        try:
+            return int(str(self.compute_capability).split(".", 1)[0]) >= 8
+        except (TypeError, ValueError):
+            return False
+
+    @property
+    def auto_assignable(self) -> bool:
+        return self.h3_eligible and bool(self.uuid)
+
+    @property
+    def eligibility_reason(self) -> str:
+        if self.h3_eligible and not self.uuid:
+            return "GPU UUID unavailable; automatic assignment is disabled (select the physical index)"
+        if self.h3_eligible:
+            return "SM 8.0+"
+        if not self.compute_capability:
+            return "compute capability unavailable"
+        return f"SM {self.compute_capability} is below the W4A8 SM 8.0 requirement"
 
     def to_dict(self) -> dict:
         return {
@@ -30,6 +56,10 @@ class GPUInfo:
             "compute_capability": self.compute_capability,
             "driver_version": self.driver_version,
             "selected_for_inference": self.selected_for_inference,
+            "uuid": self.uuid,
+            "h3_eligible": self.h3_eligible,
+            "auto_assignable": self.auto_assignable,
+            "eligibility_reason": self.eligibility_reason,
         }
 
 
@@ -51,6 +81,25 @@ class HardwareProfile:
     def primary_gpu(self) -> GPUInfo | None:
         return next((gpu for gpu in self.gpus if gpu.selected_for_inference), None)
 
+    @property
+    def inference_gpus(self) -> tuple[GPUInfo, ...]:
+        """All detected adapters available for explicit GPU assignment.
+
+        ``selected_for_inference`` remains the v0.1 primary marker for
+        backwards-compatible reports; it no longer means that other adapters
+        are unusable.  The scheduler uses the physical UUID when present.
+        """
+
+        return self.gpus
+
+    @property
+    def eligible_gpus(self) -> tuple[GPUInfo, ...]:
+        return tuple(gpu for gpu in self.gpus if gpu.h3_eligible)
+
+    @property
+    def auto_assignable_gpus(self) -> tuple[GPUInfo, ...]:
+        return tuple(gpu for gpu in self.gpus if gpu.auto_assignable)
+
     def to_dict(self) -> dict:
         return {
             "cpu": self.cpu,
@@ -63,6 +112,10 @@ class HardwareProfile:
             "pytorch_cuda_version": self.pytorch_cuda_version,
             "torch_cuda_available": self.torch_cuda_available,
             "gpus": [gpu.to_dict() for gpu in self.gpus],
+            "gpu_count": len(self.gpus),
+            "multi_gpu_supported": len(self.gpus) > 1,
+            "eligible_gpu_count": len(self.eligible_gpus),
+            "auto_assignable_gpu_count": len(self.auto_assignable_gpus),
             "warnings": list(self.warnings),
         }
 
@@ -100,7 +153,7 @@ class HardwareProfiler:
         warnings: list[str] = []
         query = [
             "nvidia-smi",
-            "--query-gpu=index,name,memory.total,compute_cap,driver_version",
+            "--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version",
             "--format=csv,noheader,nounits",
         ]
         result = self._run(query)
@@ -126,23 +179,37 @@ class HardwareProfiler:
             if not line.strip():
                 continue
             parts = [part.strip() for part in line.split(",")]
-            if len(parts) != 5:
+            # Current nvidia-smi query: index,uuid,name,memory,compute,driver.
+            # Accept the old five-column shape used by older drivers/tests.
+            if len(parts) not in {5, 6}:
                 warnings.append(f"could not parse nvidia-smi GPU row: {line}")
                 continue
             try:
                 index = int(parts[0])
-                memory_bytes = int(float(parts[2]) * 1024 * 1024)
+                if len(parts) == 6:
+                    uuid = parts[1].upper() if parts[1].upper().startswith("GPU-") else None
+                    name = parts[2]
+                    memory_bytes = int(float(parts[3]) * 1024 * 1024)
+                    compute_capability = parts[4] or None
+                    driver_version = parts[5] or None
+                else:
+                    uuid = None
+                    name = parts[1]
+                    memory_bytes = int(float(parts[2]) * 1024 * 1024)
+                    compute_capability = parts[3] or None
+                    driver_version = parts[4] or None
             except ValueError:
                 warnings.append(f"invalid nvidia-smi numeric field: {line}")
                 continue
             gpus.append(
                 GPUInfo(
                     index=index,
-                    name=parts[1],
+                    name=name,
                     vram_total_bytes=memory_bytes,
-                    compute_capability=parts[3] or None,
-                    driver_version=parts[4] or None,
+                    compute_capability=compute_capability,
+                    driver_version=driver_version,
                     selected_for_inference=index == 0,
+                    uuid=uuid,
                 )
             )
         full = self._run(["nvidia-smi"])
@@ -188,7 +255,15 @@ class HardwareProfiler:
         warnings.extend(torch_warnings)
         if len(gpus) > 1:
             warnings.append(
-                "v0.1 selects GPU 0 only; additional GPUs are detected but not scheduled"
+                "複数GPUを検出しました。生成ごとに物理GPUを割り当てられます（既定の並列数は1）"
+            )
+        if gpus and not any(gpu.h3_eligible for gpu in gpus):
+            warnings.append(
+                "H3 W4A8を自動割り当てできるSM 8.0以上のGPUが見つかりません"
+            )
+        elif gpus and not any(gpu.auto_assignable for gpu in gpus):
+            warnings.append(
+                "H3対応GPUのUUIDを取得できないため、自動GPU割り当ては無効です。物理indexを明示してください"
             )
         return HardwareProfile(
             cpu=self._cpu_name(),

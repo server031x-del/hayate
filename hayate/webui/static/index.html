@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260827-model-setup">
+  <link rel="stylesheet" href="/assets/app.css?v=20260908-fasth3-v1">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -76,22 +76,34 @@
               <p>品質と速度のバランスを選択</p>
             </div>
             <div class="profile-grid" id="profileGrid">
-              <label class="profile-card selected">
-                <input type="radio" name="profile" value="fast_sage" checked>
-                <span class="profile-icon speed">S</span>
-                <span><b>最速</b><small>生成時間を最優先</small></span>
-              </label>
               <label class="profile-card">
-                <input type="radio" name="profile" value="fast_sage_detail">
+                <input type="radio" name="profile" value="fast_sage">
+                <span class="profile-icon speed">S</span>
+                <span><b>速度優先</b><small>細部より待ち時間を優先</small></span>
+              </label>
+              <label class="profile-card selected">
+                <input type="radio" name="profile" value="fast_sage_detail" checked>
                 <span class="profile-icon detail">D</span>
-                <span><b>高速・画質優先</b><small>終盤の細部を追加計算</small></span>
+                <span><b>高速・画質優先</b><small>20ステップ・終盤の細部を追加計算</small></span>
                 <em>推奨</em>
               </label>
               <label class="profile-card">
                 <input type="radio" name="profile" value="pdd">
                 <span class="profile-icon pdd">P8</span>
                 <span><b>PDD 8-Step</b><small>蒸留8回評価・要品質比較</small></span>
-                <em>NEW</em>
+                <em>要比較</em>
+              </label>
+              <label class="profile-card fasth3-profile">
+                <input type="radio" name="profile" value="fasth3" disabled>
+                <span class="profile-icon fasth3">V</span>
+                <span><b>FastH3 VSA 4-Step</b><small>追加環境が必要・INT8単一ファイル非対応・品質未比較</small></span>
+                <em>EXPERIMENT</em>
+              </label>
+              <label class="profile-card fasth3-profile fasth3-fast-profile" hidden>
+                <input type="radio" name="profile" value="fasth3_fast" disabled>
+                <span class="profile-icon fasth3">B</span>
+                <span><b>FastH3 専用GPU向け</b><small>公式v1 · sm100a + FA4 + compile · T2VAのみ</small></span>
+                <em>BLACKWELL</em>
               </label>
               <label class="profile-card">
                 <input type="radio" name="profile" value="fast">
@@ -150,7 +162,7 @@
                   <div class="resolution-picker">
                     <span class="resolution-icon" aria-hidden="true">▦</span>
                     <select id="resolutionPreset" aria-label="出力解像度">
-                      <optgroup label="RTX 3060向け · 軽量">
+                      <optgroup label="軽量 · 速度優先">
                         <option value="512x512">高速 · 正方形 512 × 512</option>
                         <option value="512x288">高速 · 横長 512 × 288</option>
                         <option value="288x512">高速 · 縦長 288 × 512</option>
@@ -171,7 +183,7 @@
                   </div>
                   <div class="resolution-meta" aria-live="polite">
                     <span id="resolutionTier" class="resolution-tier fast">FAST</span>
-                    <span id="resolutionDescription">RTX 3060で速度を優先する安全な基準サイズ</span>
+                    <span id="resolutionDescription">速度を優先する安全な基準サイズ</span>
                   </div>
                   <div class="dimension-fields" id="customResolution" hidden>
                     <input id="width" type="number" min="256" max="1536" step="32" value="512" aria-label="幅">
@@ -193,6 +205,7 @@
                   <label><span>Block swap</span><input id="blocksSwap" type="number" min="0" max="49" value="49"></label>
                   <label><span>Activation chunk rows</span><input id="chunkRows" type="number" min="0" max="1048576" step="1024" value="32768"></label>
                   <label><span>VAE tile</span><select id="vaeTile"><option value="256">256 · 安全</option><option value="320">320 · 実験的</option></select></label>
+                  <label><span>実行GPU<small>Autoは空きGPUへ割り当て</small></span><select id="gpuDevice"><option value="auto">Auto · 空きGPUを選択</option></select></label>
                   <label class="toggle-field"><span>Prompt Cache<small>同じ入力を高速再利用</small></span><input id="promptCache" type="checkbox" checked><i></i></label>
                 </div>
                 <div class="easycache-box">
@@ -244,13 +257,13 @@
                 </div>
               </div>
             </div>
-            <div class="tip-card"><span>QUALITY NOTE</span><p>高速化は近似計算を含みます。「高速・画質優先」は終盤を追加計算し、基準環境では「最速」より約5〜10%低速です。完全な数値再現が必要な場合はFast SDPAを選択してください。</p></div>
+            <div class="tip-card"><span>QUALITY NOTE</span><p>まず「高速・画質優先」で生成し、同じプロンプト・解像度・尺で比較してください。高速化は近似計算を含みます。FastH3の品質・速度と1生成あたりの費用は、この環境では未測定です。専用GPU向け設定は対応確認後に表示します。</p></div>
           </aside>
         </div>
       </section>
 
       <section class="view" id="view-queue">
-        <div class="view-toolbar"><div><h2>生成キュー</h2><p>RTX 3060で一件ずつ安全に処理します</p></div><button class="secondary-button" data-go="generate">＋ 新しい生成</button></div>
+        <div class="view-toolbar"><div><h2>生成キュー</h2><p>検出したGPUへ安全にジョブを割り当てます</p></div><button class="secondary-button" data-go="generate">＋ 新しい生成</button></div>
         <div class="jobs-list panel" id="queueList"><div class="empty-list">キューは空です</div></div>
       </section>
 
@@ -273,6 +286,10 @@
               <label><span>Prompt cache directory</span><div><input id="settingCache" type="text"><i data-ready="prompt_cache_dir"></i></div></label>
               <label><span>PDD Acc 8-Step checkpoint</span><div><input id="settingPddCheckpoint" type="text"><i data-ready="pdd_checkpoint_path"></i></div><small>Alibaba PAI FL2VA Acc 8-Step</small></label>
               <label><span>PDD AdaLN affine map</span><div><input id="settingPddAffine" type="text"><i data-ready="pdd_adaln_affine_path"></i></div><small>released 2688次元をpruned 8次元へ投影</small></label>
+              <label><span>既定のGPU</span><select id="settingGpuDefault"><option value="auto">Auto · 空きGPUを選択</option></select><small>UUIDで物理GPUを固定し、CUDAの表示順変更にも追従します。</small></label>
+              <label><span>同時実行GPU数</span><select id="settingGpuParallel"><option value="1">1 · 安全（推奨）</option><option value="2">2 · 2枚で並列</option><option value="3">3 · 3枚で並列</option><option value="4">4 · 4枚で並列</option><option value="5">5 · 5枚で並列</option><option value="6">6 · 6枚で並列</option><option value="7">7 · 7枚で並列</option><option value="8">8 · 8枚で並列</option></select><small>CPUオフロードのRAM/SSD帯域も共有します。まず1で測定してください。変更は次回起動時に反映します。</small></label>
+              <label><span>FastVideo model directory（実験）</span><div><input id="settingFastVideoModel" type="text"><i class="optional-ready"></i></div><small>公式FastVideoスナップショットのフォルダ（model_index.json / modular_model_index.json / fastvideo_inference.json のいずれか + transformer/）。Kijai単一safetensorsはここへ直接指定できません。</small></label>
+              <label><span>FastVideo Python（実験）</span><div><input id="settingFastVideoPython" type="text"><i class="optional-ready"></i></div><small>FastVideoをインストールしたPython。空欄ならHAYATEのPythonを使用します。</small></label>
             </div>
             <div class="divider"></div>
             <div class="section-heading compact"><div><span class="step-number">B</span><h2>モデルセットアップ</h2></div><span class="counter" id="modelSetupSummary">未確認</span></div>
@@ -288,6 +305,11 @@
               <label class="model-license-consent"><input id="modelLicenseConsent" type="checkbox"><span>各モデルのライセンスと利用規約を確認しました（ダウンロードを有効化）</span></label>
               <div class="model-asset-list" id="modelAssetList"><div class="model-setup-empty">モデル状態を確認しています…</div></div>
               <p class="model-setup-note">大容量ファイルはGitに含めません。取得先・revision・SHA-256を固定し、中断後も安全に再実行できます。利用規約と容量を確認してからダウンロードしてください。</p>
+              <div class="fasth3-status-box">
+                <div><b>FastH3 / VSA 実験経路</b><small>通常のmayble H3とは別エンジンです。重みを読み込まずに利用条件だけ診断できます。</small><a class="model-source fasth3-source-link" href="https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree" target="_blank" rel="noreferrer">公式FastH3 v1モデルを開く</a><small>約148GB（約138GiB）の公式スナップショットは <code>scripts/setup_fasth3_wsl.ps1 -DownloadModel</code> を明示実行した場合だけ取得します。</small></div>
+                <button type="button" class="secondary-button small" id="checkFastH3">利用条件を診断</button>
+                <p id="fastH3Status" class="fasth3-status" role="status">未診断</p>
+              </div>
             </div>
             <div class="divider"></div>
             <div class="section-heading compact"><div><span class="step-number">C</span><h2>AI prompt director</h2></div><span class="counter" id="openaiKeyStatus">未設定</span></div>
@@ -358,6 +380,8 @@
     </form>
   </dialog>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/assets/app.js?v=20260827-model-setup" defer></script>
+  <!-- Legacy cache key retained in this marker for clients that fingerprint the previous build. -->
+  <!-- app.js?v=20260827-model-setup -->
+  <script src="/assets/app.js?v=20260908-fasth3-v1" defer></script>
 </body>
 </html>

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+from hayate.runtime.gpu_devices import (
+    AUTO_GPU,
+    allowed_gpu_devices,
+    discover_gpu_devices,
+    normalize_gpu_selector,
+    resolve_gpu_selector,
+)
 
 
 _PROBE_SCRIPT = r'''
@@ -139,6 +148,7 @@ def probe_w4a8_kernel(
     checkpoint: str | Path | None = None,
     layer: str | None = None,
     timeout: float = 180.0,
+    gpu_device: str = AUTO_GPU,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> KernelProbe:
     """Force one W4A8 linear through comfy-kitchen's native CUDA backend.
@@ -158,6 +168,29 @@ def probe_w4a8_kernel(
             "",
         )
     try:
+        selector = normalize_gpu_selector(gpu_device)
+    except ValueError as exc:
+        return KernelProbe(interpreter, False, False, {"error": str(exc)}, -1, "")
+    child_environment = None
+    if selector != AUTO_GPU:
+        selected = resolve_gpu_selector(
+            selector,
+            allowed_gpu_devices(discover_gpu_devices()),
+        )
+        if selected is None:
+            return KernelProbe(
+                interpreter,
+                False,
+                False,
+                {"error": f"selected GPU was not found: {selector}"},
+                -1,
+                "",
+            )
+        child_environment = dict(os.environ)
+        child_environment["CUDA_VISIBLE_DEVICES"] = selected.visible_id
+        child_environment["HAYATE_GPU_UUID"] = selected.uuid or ""
+        child_environment["HAYATE_GPU_INDEX"] = str(selected.index)
+    try:
         command = [str(interpreter), "-c", _PROBE_SCRIPT]
         if checkpoint is not None or layer is not None:
             if checkpoint is None or layer is None:
@@ -176,6 +209,7 @@ def probe_w4a8_kernel(
             text=True,
             check=False,
             timeout=timeout,
+            **({"env": child_environment} if child_environment is not None else {}),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return KernelProbe(interpreter, False, False, {"error": str(exc)}, -1, "")

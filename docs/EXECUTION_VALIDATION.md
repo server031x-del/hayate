@@ -1,5 +1,9 @@
 # RTX 3060 / 32 GB execution validation
 
+This document records the historical single-GPU validation baseline. Current
+HAYATE can assign each eligible physical GPU independently; these measurements
+remain reference data rather than a hardware restriction.
+
 Validation date: 2026-08-25.
 
 ## Reference environment

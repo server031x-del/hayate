@@ -12,7 +12,12 @@ from rich.console import Console
 from rich.table import Table
 
 from hayate import __version__
-from hayate.backends.minimax_h3 import ExternalH3GenerationBackend, GenerationRequest
+from hayate.backends.minimax_h3 import (
+    ExternalH3GenerationBackend,
+    FastH3GenerationBackend,
+    GenerationRequest,
+)
+from hayate.backends.minimax_h3.fasth3 import fasth3_preflight
 from hayate.benchmark import Benchmark
 from hayate.errors import HayateError
 from hayate.hardware import HardwareProfile, HardwareProfiler
@@ -21,6 +26,14 @@ from hayate.models import ModelRegistry
 from hayate.kernels import probe_w4a8_kernel
 from hayate.profiles import get_generation_profile
 from hayate.runtime import HayateRuntime, ModelRuntimeResult
+from hayate.runtime.gpu_devices import (
+    AUTO_GPU,
+    allowed_gpu_devices,
+    choose_auto_gpu,
+    discover_gpu_devices,
+    normalize_gpu_selector,
+    resolve_gpu_selector,
+)
 from hayate.runtime.gpu_lease import GPULease
 
 GIB = 1024**3
@@ -53,6 +66,38 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--no-save-benchmark", action="store_true")
     inspect_parser.add_argument("--benchmark-dir", type=Path, default=Path("benchmarks"))
 
+    fasth3_parser = subparsers.add_parser(
+        "fasth3-check",
+        help="inspect the Kijai artifact and optional official FastVideo route without loading weights",
+    )
+    fasth3_parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=Path(
+            "models/minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors"
+        ),
+    )
+    fasth3_parser.add_argument(
+        "--model-dir",
+        type=Path,
+        default=Path("models/fastvideo"),
+        help="official FastVideo model directory (metadata JSON + transformer/)",
+    )
+    fasth3_parser.add_argument(
+        "--python",
+        type=str,
+        default=str(Path(sys.executable)),
+        help="native python.exe or wsl://<distribution>/<linux-python>",
+    )
+    fasth3_parser.add_argument("--task", choices=("auto", "t2va", "fl2va", "ref2va"), default="auto")
+    fasth3_parser.add_argument(
+        "--performance-profile",
+        choices=("strict", "fast"),
+        default="strict",
+        help="strict uses Triton VSA; fast requires Blackwell sm100a VSA + FA4",
+    )
+    fasth3_parser.add_argument("--json", action="store_true", dest="as_json")
+
     kernel_parser = subparsers.add_parser(
         "kernel-check", help="force a tiny W4A8 operation through the native CUDA backend"
     )
@@ -61,6 +106,13 @@ def build_parser() -> argparse.ArgumentParser:
     kernel_parser.add_argument("--save", type=Path, default=None)
     kernel_parser.add_argument("--model", type=Path, default=None)
     kernel_parser.add_argument("--layer", default=None)
+    kernel_parser.add_argument(
+        "--gpu",
+        "--gpu-device",
+        dest="gpu_device",
+        default=AUTO_GPU,
+        help="physical GPU selector: auto, physical index, or NVIDIA GPU UUID",
+    )
 
     generate_parser = subparsers.add_parser(
         "generate", help="preflight and run maybleMyers/h3 with HAYATE model overrides"
@@ -74,7 +126,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(os.environ.get("HAYATE_H3_CHECKOUT", "upstream/h3")),
     )
-    generate_parser.add_argument("--python", type=Path, default=Path(sys.executable))
+    generate_parser.add_argument(
+        "--python",
+        type=str,
+        default=str(Path(sys.executable)),
+        help="native python.exe or wsl://<distribution>/<linux-python> for --fasth3",
+    )
     generate_parser.add_argument(
         "--task", choices=("auto", "t2va", "fl2va", "ref2va"), default="auto"
     )
@@ -86,6 +143,13 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--frames", type=int, default=124)
     generate_parser.add_argument("--steps", type=int, default=50)
     generate_parser.add_argument("--seed", type=int, default=20260825)
+    generate_parser.add_argument(
+        "--gpu",
+        "--gpu-device",
+        dest="gpu_device",
+        default=AUTO_GPU,
+        help="physical GPU selector: auto, physical index, or NVIDIA GPU UUID",
+    )
     generate_parser.add_argument("--blocks-to-swap", type=int, default=49)
     generate_parser.add_argument("--activation-chunk-rows", type=int, default=32768)
     generate_parser.add_argument("--prompt-cache", type=Path, default=None)
@@ -120,39 +184,54 @@ def build_parser() -> argparse.ArgumentParser:
     )
     speed_profiles = generate_parser.add_mutually_exclusive_group()
     speed_profiles.add_argument(
+        "--fasth3",
+        action="store_true",
+        help="use the optional FastVideo VSA 4-step backend; --ckpt-dir is the FastVideo model directory",
+    )
+    speed_profiles.add_argument(
+        "--fast",
         "--rtx3060-fast",
+        dest="rtx3060_fast",
         action="store_true",
         help=(
-            "apply the validated RTX 3060 fast profile: 20 points, EasyCache 0.4, "
+            "apply the validated consumer-GPU fast profile: 20 points, EasyCache 0.4, "
             "two consecutive skips, 49 swapped blocks, and 32768-row chunks"
         ),
     )
     speed_profiles.add_argument(
+        "--fast-sage",
         "--rtx3060-fast-sage",
+        dest="rtx3060_fast_sage",
         action="store_true",
         help=(
-            "apply the validated RTX 3060 fast profile with SageAttention 2.2; "
+            "apply the validated consumer-GPU fast profile with SageAttention 2.2; "
             "this is faster but approximate and requires a compatible package"
         ),
     )
     speed_profiles.add_argument(
+        "--fast-sage-detail",
         "--rtx3060-fast-sage-detail",
+        dest="rtx3060_fast_sage_detail",
         action="store_true",
         help=(
-            "apply the RTX 3060 SageAttention detail profile: keep 20 points and "
+            "apply the SageAttention detail profile: keep 20 points and "
             "EasyCache 0.4 while protecting the final 15 percent of denoising"
         ),
     )
     speed_profiles.add_argument(
+        "--pdd",
         "--rtx3060-pdd",
+        dest="rtx3060_pdd",
         action="store_true",
         help=(
             "apply the safe PDD Acc 8-Step profile with PyTorch SDPA; use the "
-            "experimental --rtx3060-pdd-sage only when short-clip output is validated"
+            "experimental SageAttention variant only when short-clip output is validated"
         ),
     )
     speed_profiles.add_argument(
+        "--pdd-sage",
         "--rtx3060-pdd-sage",
+        dest="rtx3060_pdd_sage",
         action="store_true",
         help="apply experimental PDD Acc 8-Step with SageAttention (8 transformer evaluations)",
     )
@@ -178,6 +257,13 @@ def build_parser() -> argparse.ArgumentParser:
     load_parser.add_argument("--vae-tile-size", type=int, default=256)
     load_parser.add_argument("--vae-no-tiling", action="store_true")
     load_parser.add_argument("--cudnn-benchmark", action="store_true")
+    load_parser.add_argument(
+        "--gpu",
+        "--gpu-device",
+        dest="gpu_device",
+        default=AUTO_GPU,
+        help="physical GPU selector: auto, physical index, or NVIDIA GPU UUID",
+    )
 
     webui_parser = subparsers.add_parser(
         "webui", help="launch the HAYATE Studio generation interface"
@@ -227,7 +313,7 @@ def _hardware_table(profile: HardwareProfile) -> Table:
     table.add_row("PyTorch", profile.pytorch_version or "not installed")
     table.add_row("PyTorch CUDA", profile.pytorch_cuda_version or "not available")
     for gpu in profile.gpus:
-        selected = " [main v0.1]" if gpu.selected_for_inference else " [detect only]"
+        selected = " [primary]" if gpu.selected_for_inference else " [available]"
         table.add_row(
             f"GPU {gpu.index}",
             f"{gpu.name} | {_gib(gpu.vram_total_bytes)} | sm_{(gpu.compute_capability or '?').replace('.', '')}{selected}",
@@ -348,18 +434,82 @@ def run_inspect(args: argparse.Namespace, console: Console) -> int:
     return 0 if all(result.error is None for result in results) else 1
 
 
+def run_fasth3_check(args: argparse.Namespace, console: Console) -> int:
+    payload = fasth3_preflight(
+        args.checkpoint,
+        python=args.python,
+        model_directory=args.model_dir,
+        task=args.task,
+        performance_profile=args.performance_profile,
+    )
+    if args.as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+    else:
+        state = "READY" if payload["ready"] else "BLOCKED"
+        console.print(f"[bold]HAYATE FastH3/VSA preflight: {state}[/bold]")
+        checkpoint = payload.get("checkpoint", {})
+        console.print(
+            f"Checkpoint: {checkpoint.get('path')} · "
+            f"{checkpoint.get('layout', 'unknown')} · "
+            f"{checkpoint.get('gate_layer_count', 0)} gate layers"
+        )
+        runtime = payload.get("runtime", {})
+        console.print(f"FastVideo runtime: {'available' if runtime.get('available') else 'missing'}")
+        for issue in payload.get("checkpoint_issues", []):
+            console.print(f"[yellow]Checkpoint note:[/yellow] {issue}")
+        for issue in payload.get("blocking_issues", payload.get("issues", [])):
+            console.print(f"[red]BLOCKER:[/red] {issue}")
+        for warning in payload.get("warnings", []):
+            console.print(f"[yellow]Warning:[/yellow] {warning}")
+    return 0 if payload["ready"] else 1
+
+
 def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
-    lease = GPULease(owner={"pid": os.getpid(), "kind": "kernel-check"})
+    selector = normalize_gpu_selector(args.gpu_device)
+    selected = resolve_gpu_selector(selector, allowed_gpu_devices(discover_gpu_devices())) if selector != AUTO_GPU else choose_auto_gpu(allowed_gpu_devices(discover_gpu_devices()))
+    if selector != AUTO_GPU and selected is None:
+        raise HayateError(f"selected GPU was not found or is not allowed: {selector}")
+    effective_selector = selected.uuid if selected and selected.uuid else str(selected.index) if selected else AUTO_GPU
+    lease = GPULease(
+        gpu_id=selected.identity if selected else None,
+        owner={
+            "pid": os.getpid(),
+            "kind": "kernel-check",
+            "gpu_uuid": selected.uuid if selected else None,
+            "gpu_index": selected.index if selected else None,
+        },
+    )
     if not lease.acquire():
         owner = lease.busy_owner() or {}
-        raise HayateError(f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})")
+        raise HayateError(f"選択したGPUはHAYATEで使用中です (pid={owner.get('pid', '?')})")
+    runtime_lease = None
+    if selected is not None:
+        runtime_lease = GPULease(
+            gpu_id=selected.identity,
+            namespace="runtime",
+            owner={
+                "pid": os.getpid(),
+                "kind": "kernel-check-runtime",
+                "gpu_uuid": selected.uuid,
+                "gpu_index": selected.index,
+            },
+        )
+        if not runtime_lease.acquire():
+            lease.release()
+            owner = runtime_lease.busy_owner() or {}
+            raise HayateError(
+                f"選択したGPUの実行ロックが残っています (pid={owner.get('pid', '?')})"
+            )
     try:
         result = probe_w4a8_kernel(
             args.python,
             checkpoint=args.model,
             layer=args.layer,
+            gpu_device=effective_selector,
         )
     finally:
+        if runtime_lease is not None:
+            runtime_lease.release()
         lease.release()
     payload = result.to_dict()
     if args.save is not None:
@@ -394,7 +544,9 @@ def run_kernel_check(args: argparse.Namespace, console: Console) -> int:
 
 def run_generate(args: argparse.Namespace, console: Console) -> int:
     selected_profile = (
-        "fast"
+        "fasth3"
+        if args.fasth3
+        else "fast"
         if args.rtx3060_fast
         else "fast_sage"
         if args.rtx3060_fast_sage
@@ -429,11 +581,14 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
                 "models/lora/adaln_affine.safetensors"
             )
     config_path = (args.config or _default_config()).resolve(strict=False)
-    backend = ExternalH3GenerationBackend(
-        args.upstream,
-        ModelRegistry.load(config_path),
-        python=args.python,
-    )
+    if args.fasth3:
+        backend = FastH3GenerationBackend(args.ckpt_dir, python=args.python)
+    else:
+        backend = ExternalH3GenerationBackend(
+            args.upstream,
+            ModelRegistry.load(config_path),
+            python=args.python,
+        )
     request = GenerationRequest(
         prompt=args.prompt,
         checkpoint_dir=args.ckpt_dir,
@@ -459,6 +614,7 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         attention_backend=args.attention_backend,
         pdd_checkpoint=args.pdd_checkpoint,
         pdd_adaln_affine=args.pdd_adaln_affine,
+        gpu_device=normalize_gpu_selector(args.gpu_device),
     )
     plan = backend.plan(request)
     payload = plan.to_dict()
@@ -514,15 +670,54 @@ def run_load_check(args: argparse.Namespace, console: Console) -> int:
         )
         if args.vae_no_tiling:
             command.append("--vae-no-tiling")
-        if args.cudnn_benchmark:
-            command.append("--cudnn-benchmark")
-    lease = GPULease(owner={"pid": os.getpid(), "kind": f"load-check:{args.component}"})
+    if args.cudnn_benchmark:
+        command.append("--cudnn-benchmark")
+    selector = normalize_gpu_selector(args.gpu_device)
+    selected = resolve_gpu_selector(selector, allowed_gpu_devices(discover_gpu_devices())) if selector != AUTO_GPU else choose_auto_gpu(allowed_gpu_devices(discover_gpu_devices()))
+    if selector != AUTO_GPU and selected is None:
+        raise HayateError(f"selected GPU was not found or is not allowed: {selector}")
+    effective_selector = selected.uuid if selected and selected.uuid else str(selected.index) if selected else AUTO_GPU
+    child_environment = None
+    if selected is not None:
+        child_environment = os.environ.copy()
+        child_environment["CUDA_VISIBLE_DEVICES"] = selected.visible_id
+        child_environment["HAYATE_GPU_UUID"] = selected.uuid or ""
+        child_environment["HAYATE_GPU_INDEX"] = str(selected.index)
+    lease = GPULease(
+        gpu_id=selected.identity if selected else None,
+        owner={
+            "pid": os.getpid(),
+            "kind": f"load-check:{args.component}",
+            "gpu_uuid": selected.uuid if selected else None,
+            "gpu_index": selected.index if selected else None,
+        },
+    )
     if not lease.acquire():
         owner = lease.busy_owner() or {}
-        raise HayateError(f"GPU 0 is already in use by HAYATE (pid={owner.get('pid', '?')})")
+        raise HayateError(f"選択したGPUはHAYATEで使用中です (pid={owner.get('pid', '?')})")
+    runtime_lease = None
+    if selected is not None:
+        runtime_lease = GPULease(
+            gpu_id=selected.identity,
+            namespace="runtime",
+            owner={
+                "pid": os.getpid(),
+                "kind": f"load-check-runtime:{args.component}",
+                "gpu_uuid": selected.uuid,
+                "gpu_index": selected.index,
+            },
+        )
+        if not runtime_lease.acquire():
+            lease.release()
+            owner = runtime_lease.busy_owner() or {}
+            raise HayateError(
+                f"選択したGPUの実行ロックが残っています (pid={owner.get('pid', '?')})"
+            )
     try:
-        return subprocess.run(command, check=False).returncode
+        return subprocess.run(command, check=False, env=child_environment).returncode
     finally:
+        if runtime_lease is not None:
+            runtime_lease.release()
         lease.release()
 
 
@@ -552,6 +747,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "inspect":
             return run_inspect(args, console)
+        if args.command == "fasth3-check":
+            return run_fasth3_check(args, console)
         if args.command == "kernel-check":
             return run_kernel_check(args, console)
         if args.command == "generate":

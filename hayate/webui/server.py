@@ -32,11 +32,24 @@ from hayate.ai.openai_prompt import (
     PromptRequest,
 )
 from hayate import __version__
-from hayate.backends.minimax_h3 import ExternalH3GenerationBackend, GenerationRequest
+from hayate.backends.minimax_h3 import (
+    ExternalH3GenerationBackend,
+    FastH3GenerationBackend,
+    GenerationRequest,
+)
+from hayate.backends.minimax_h3.fasth3 import (
+    FASTH3_PROFILE_FAST,
+    fasth3_preflight,
+)
 from hayate.backends.minimax_h3.generation import generation_artifact_paths
 from hayate.hardware import HardwareProfiler
 from hayate.models import ModelRegistry
 from hayate.profiles import get_generation_profile
+from hayate.runtime.gpu_devices import (
+    AUTO_GPU,
+    discover_gpu_devices,
+    normalize_gpu_selector,
+)
 from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
 from hayate.webui.model_setup import ModelSetupError, ModelSetupService
@@ -54,6 +67,8 @@ PROFILE_NAMES = (
     "fast_sage_detail",
     "pdd",
     "pdd_sage",
+    "fasth3",
+    "fasth3_fast",
     "custom",
 )
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -76,6 +91,10 @@ class SettingsPayload(BaseModel):
     prompt_cache_dir: str
     pdd_checkpoint_path: str
     pdd_adaln_affine_path: str
+    fastvideo_model_path: str = ""
+    fastvideo_python_path: str = ""
+    gpu_default_selector: str = AUTO_GPU
+    gpu_parallel_jobs: int = Field(default=1, ge=1, le=8)
     openai_model: str = Field(default=DEFAULT_OPENAI_MODEL, min_length=1, max_length=128)
     # ``None`` means keep the current credential.  A non-empty value replaces
     # it; clearing is an explicit, separate operation.
@@ -86,6 +105,11 @@ class SettingsPayload(BaseModel):
     @classmethod
     def valid_openai_model(cls, value: str) -> str:
         return validate_model(value)
+
+    @field_validator("gpu_default_selector")
+    @classmethod
+    def valid_gpu_selector(cls, value: str) -> str:
+        return normalize_gpu_selector(value)
 
 
 class PromptAssistantPayload(BaseModel):
@@ -151,8 +175,10 @@ class GenerationPayload(BaseModel):
         "fast_sage_detail",
         "pdd",
         "pdd_sage",
+        "fasth3",
+        "fasth3_fast",
         "custom",
-    ] = "fast_sage"
+    ] = "fast_sage_detail"
     task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
     width: int = Field(default=512, ge=256, le=1536)
     height: int = Field(default=512, ge=256, le=1536)
@@ -174,6 +200,7 @@ class GenerationPayload(BaseModel):
     blocks_to_swap: int = Field(default=49, ge=0, le=49)
     activation_chunk_rows: int = Field(default=32768, ge=0, le=1048576)
     vae_tile_size: int = Field(default=256, ge=16, le=2048)
+    gpu_device: str = AUTO_GPU
 
     @field_validator("width", "height")
     @classmethod
@@ -195,6 +222,11 @@ class GenerationPayload(BaseModel):
         if any(not ASSET_ID_RE.fullmatch(value) for value in values):
             raise ValueError("invalid reference asset id")
         return values
+
+    @field_validator("gpu_device")
+    @classmethod
+    def valid_gpu_device(cls, value: str) -> str:
+        return normalize_gpu_selector(value)
 
 
 def _nearest_h3_frame_count(duration_seconds: float) -> int:
@@ -298,13 +330,13 @@ def create_app(
             f"HAYATE WebUI is already running (pid={owner.get('pid', '?')})"
         )
     try:
+        settings = settings_store.load()
         store = (
             job_manager.store
             if job_manager is not None
             else JobStore(data_dir / "hayate-webui.sqlite3")
         )
-        manager = job_manager or JobManager(store)
-        settings = settings_store.load()
+        manager = job_manager or JobManager(store, worker_count=settings.gpu_parallel_jobs)
         store.import_outputs(Path(settings.output_dir))
     except Exception:
         instance_lease.release()
@@ -508,6 +540,8 @@ def create_app(
             "checkpoint_dir",
             "pdd_checkpoint_path",
             "pdd_adaln_affine_path",
+            "fastvideo_model_path",
+            "fastvideo_python_path",
         ):
             current_values[key] = defaults[key]
         current = settings_store.save(WebUISettings(**current_values))
@@ -539,6 +573,29 @@ def create_app(
     async def get_model_downloads():
         return {"downloads": await asyncio.to_thread(model_setup.downloads)}
 
+    @app.get("/api/models/fasth3")
+    async def get_fasth3_status():
+        """Inspect the optional FastH3/VSA routes without loading weights."""
+
+        current = settings_store.load()
+        checkpoint = root / "models" / (
+            "minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors"
+        )
+        model_directory = current.fastvideo_model_path or str(root / "models" / "fastvideo")
+        python = current.fastvideo_python_path or current.python_path
+        status = await asyncio.to_thread(
+            fasth3_preflight,
+            checkpoint,
+            python=python,
+            model_directory=model_directory,
+            task="auto",
+        )
+        # The strict route and the Blackwell route share the same runtime and
+        # directory probe.  ``fasth3_preflight`` reports the latter's extra
+        # kernel/FA4 gate without running a second import or allocating model
+        # weights.
+        return status
+
     @app.put("/api/settings")
     async def put_settings(payload: SettingsPayload, request: Request):
         openai_current = openai_settings_store.load()
@@ -558,6 +615,10 @@ def create_app(
             "prompt_cache_dir",
             "pdd_checkpoint_path",
             "pdd_adaln_affine_path",
+            "fastvideo_model_path",
+            "fastvideo_python_path",
+            "gpu_default_selector",
+            "gpu_parallel_jobs",
         }
         current = settings_store.save(
             WebUISettings(**payload.model_dump(include=runtime_keys))
@@ -698,6 +759,11 @@ def create_app(
         )
         frames = _nearest_h3_frame_count(payload.duration_seconds)
         profile = _profile_values(payload)
+        gpu_device = (
+            payload.gpu_device
+            if payload.gpu_device != AUTO_GPU
+            else current.gpu_default_selector
+        )
         prompt_cache = None
         if payload.use_prompt_cache:
             cache_key = hashlib.sha256(
@@ -714,11 +780,22 @@ def create_app(
             ).hexdigest()[:24]
             prompt_cache = Path(current.prompt_cache_dir) / f"{cache_key}.safetensors"
         try:
-            backend = ExternalH3GenerationBackend(
-                current.upstream_path,
-                ModelRegistry.load(current.config_path),
-                python=current.python_path,
-            )
+            if payload.profile in {"fasth3", "fasth3_fast"}:
+                backend = FastH3GenerationBackend(
+                    current.fastvideo_model_path or str(root / "models" / "fastvideo"),
+                    python=current.fastvideo_python_path or current.python_path,
+                    performance_profile=(
+                        FASTH3_PROFILE_FAST
+                        if payload.profile == "fasth3_fast"
+                        else "strict"
+                    ),
+                )
+            else:
+                backend = ExternalH3GenerationBackend(
+                    current.upstream_path,
+                    ModelRegistry.load(current.config_path),
+                    python=current.python_path,
+                )
             request = GenerationRequest(
                 prompt=payload.prompt,
                 checkpoint_dir=Path(current.checkpoint_dir),
@@ -750,6 +827,7 @@ def create_app(
                 pdd_adaln_affine=(
                     Path(current.pdd_adaln_affine_path) if bool(profile["pdd"]) else None
                 ),
+                gpu_device=gpu_device,
             )
             plan = await asyncio.to_thread(backend.plan, request)
             if not plan.executable:
@@ -762,9 +840,12 @@ def create_app(
                 )
             cli_ready, reason = await asyncio.to_thread(backend.probe_cli)
             if not cli_ready:
-                raise HTTPException(
-                    422, f"upstream generation CLI is unavailable: {reason}"
+                label = (
+                    "FastVideo runtime"
+                    if payload.profile in {"fasth3", "fasth3_fast"}
+                    else "upstream generation CLI"
                 )
+                raise HTTPException(422, f"{label} is unavailable: {reason}")
         except HTTPException:
             raise
         except (OSError, ValueError, KeyError) as exc:
@@ -778,6 +859,8 @@ def create_app(
             effective_prompt=payload.prompt,
             effective_profile=profile,
             warnings=list(plan.warnings),
+            effective_gpu_device=gpu_device,
+            requested_gpu_selector=payload.gpu_device,
         )
         return manager.submit(plan, request_payload)
 
