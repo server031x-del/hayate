@@ -747,9 +747,40 @@ function modelAssetStatusLabel(asset, status) {
   return asset.downloadable === false ? "未配置・公開元を確認して手動配置" : "未配置";
 }
 
+const STANDARD_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32", "checkpoint_support"];
+function configurationAssets(assets) {
+  const choice = $("#modelConfiguration").value;
+  if (choice === "all") return assets;
+  const ids = choice === "pdd" ? [...STANDARD_MODEL_IDS, "pdd_fl2va_8step", "pdd_adaln_affine"] : STANDARD_MODEL_IDS;
+  return assets.filter(asset => ids.includes(asset.id));
+}
+let configurationDownloading = false;
+async function downloadConfiguration() {
+  if (configurationDownloading || !$("#modelLicenseConsent").checked || $("#modelConfiguration").value === "all") return;
+  const assets = configurationAssets(state.modelSetup?.assets || []).filter(asset => asset.downloadable && !["ready", "invalid", "downloading"].includes(modelAssetStatus(asset)));
+  configurationDownloading = true;
+  renderModelSetup(state.modelSetup);
+  try {
+    await api("/api/models/setup/prepare", {method: "POST", body: {}});
+    for (const asset of assets) {
+      await api("/api/models/setup/download", {method: "POST", body: {asset_id: asset.id, license_accepted: true}});
+    }
+    toast("選択した構成の取得を受け付けました。各モデルの進捗を確認してください");
+  } catch (error) { toast(error.message, "error"); }
+  finally { configurationDownloading = false; await refreshModelSetup(true); }
+}
+
 function renderModelSetup(payload) {
   state.modelSetup = payload || {};
-  const assets = payload?.assets || payload?.models || [];
+  const allAssets = payload?.assets || payload?.models || [];
+  const assets = configurationAssets(allAssets);
+  const choice = $("#modelConfiguration").value;
+  const total = assets.reduce((sum, asset) => sum + (Number(asset.size_bytes) || 0), 0);
+  $("#modelConfigurationNote").textContent = choice === "all"
+    ? "実験用・別エンジン用も含みます。すべてのモデルを取得する必要はありません。"
+    : `${choice === "standard" ? "迷ったらこの構成。高速・画質優先で使う通常H3の必要セットです。" : "標準セットに8-Step用の追加モデルを含みます。品質は標準構成と比較してください。"} 必要ファイル ${assets.length}件・合計 ${bytes(total)}（VRAM必要量ではありません）。取得後は「標準パスを適用」を押してください。`;
+  $("#downloadConfiguration").disabled = configurationDownloading || choice === "all" || !$("#modelLicenseConsent").checked || !assets.some(asset => asset.downloadable && !["ready", "invalid", "downloading"].includes(modelAssetStatus(asset)));
+
   const ready = assets.filter((asset) => modelAssetStatus(asset) === "ready").length;
   $("#modelSetupSummary").textContent = assets.length ? `${ready} / ${assets.length} 準備済み` : "モデル未確認";
   const list = $("#modelAssetList");
@@ -788,7 +819,7 @@ function renderModelSetup(payload) {
       <button type="button" class="model-asset-action" data-model-download="${escapeHTML(asset.id || "")}" ${canDownload ? "" : "disabled"}>${actionLabel}</button>
     </article>`;
   }).join("");
-  const active = assets.some((asset) => modelAssetStatus(asset) === "downloading");
+  const active = allAssets.some((asset) => modelAssetStatus(asset) === "downloading");
   if (active && !state.modelTimer) {
     state.modelTimer = setInterval(() => refreshModelSetup(true), 4000);
   } else if (!active && state.modelTimer) {
@@ -1064,6 +1095,8 @@ function bindEvents() {
   $("#applyStandardPaths").addEventListener("click", applyStandardPaths);
   $("#refreshModelSetup").addEventListener("click", () => refreshModelSetup());
   $("#checkFastH3").addEventListener("click", checkFastH3);
+  $("#modelConfiguration").addEventListener("change", () => renderModelSetup(state.modelSetup));
+  $("#downloadConfiguration").addEventListener("click", downloadConfiguration);
   $("#modelLicenseConsent").addEventListener("change", () => renderModelSetup(state.modelSetup));
   $("#modelAssetList").addEventListener("click", (event) => {
     const button = event.target.closest("[data-model-download]");

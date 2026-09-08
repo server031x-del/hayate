@@ -643,3 +643,7 @@ select:focus-visible, summary:focus-visible, a:focus-visible {
 
 /* Unsupported hardware profiles stay hidden despite card display rules. */
 .profile-card[hidden] { display: none; }
+
+.model-config-picker { display: grid; gap: 8px; margin: 18px 0 10px; }
+.model-config-picker select { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: inherit; }
+#modelConfigurationNote { line-height: 1.7; margin-bottom: 12px; }

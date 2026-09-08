@@ -302,6 +302,13 @@
                   <button type="button" class="text-button" id="refreshModelSetup">再スキャン</button>
                 </div>
               </div>
+              <label class="model-config-picker"><span>おすすめの構成</span><select id="modelConfiguration">
+                <option value="standard">おすすめ：品質・速度バランス（通常H3 W4A8）</option>
+                <option value="pdd">比較用：PDD 8-Step（標準構成＋追加LoRA）</option>
+                <option value="all">上級者向け：すべてのモデルを表示</option>
+              </select></label>
+              <p id="modelConfigurationNote" role="status"></p>
+              <button type="button" class="secondary-button" id="downloadConfiguration" disabled>この構成の未取得モデルを取得</button>
               <label class="model-license-consent"><input id="modelLicenseConsent" type="checkbox"><span>各モデルのライセンスと利用規約を確認しました（ダウンロードを有効化）</span></label>
               <div class="model-asset-list" id="modelAssetList"><div class="model-setup-empty">モデル状態を確認しています…</div></div>
               <p class="model-setup-note">大容量ファイルはGitに含めません。取得先・revision・SHA-256を固定し、中断後も安全に再実行できます。利用規約と容量を確認してからダウンロードしてください。</p>
