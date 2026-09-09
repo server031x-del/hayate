@@ -65,9 +65,9 @@ const MODEL_ROLE_LABELS = {
 
 function savedTheme() {
   try {
-    return localStorage.getItem(THEME_KEY) || "dark";
+    return localStorage.getItem(THEME_KEY) || "clear";
   } catch {
-    return "dark";
+    return "clear";
   }
 }
 
@@ -564,9 +564,10 @@ function renderLibrary() {
   const jobs = state.jobs.filter((job) => {
     if (!["succeeded", "partial", "failed"].includes(job.status)) return false;
     if (filter !== "all" && job.status !== filter) return false;
-    const haystack = `${job.request?.prompt || ""} ${job.output_path || ""}`.toLowerCase();
+    const haystack = `${job.request?.prompt || job.plan?.request?.prompt || ""} ${job.output_path || ""}`.toLowerCase();
     return haystack.includes(query);
   });
+  $("#libraryCount").textContent = `${jobs.length}件`;
   if (!jobs.length) {
     grid.innerHTML = '<div class="empty-library">条件に一致する生成履歴がありません</div>';
     return;
@@ -583,10 +584,10 @@ function renderLibrary() {
     const gpu = job.assigned_gpu_name ? `GPU ${job.assigned_gpu_index ?? "?"} · ${job.assigned_gpu_name}` : "Auto";
     return `<article class="library-card ${job.status}" data-open-job="${job.id}">
       <button type="button" class="library-card-delete" data-delete-job="${job.id}" aria-label="この生成を削除">削除</button>
-      <div class="library-video">${video}</div>
+      <div class="library-video">${video}<span class="preview-caption">${playable ? "クリックして拡大再生" : "ログ・詳細を確認"}</span></div>
       <div class="card-body"><div class="card-meta"><span>${statusLabels[job.status]}</span><time>${compactDate(job.created_at)}</time></div>
       <h3>${escapeHTML(request.prompt || "過去の生成結果")}</h3>
-      <div class="card-specs"><span><b>${size}</b></span><span><b>${frames}</b> frames</span><span><b>${clock(job.duration_seconds)}</b></span><span title="${escapeHTML(gpu)}"><b>${escapeHTML(gpu)}</b></span></div></div>
+      <div class="card-specs"><span><b>${size}</b></span><span><b>${frames}</b> frames</span><span>生成時間 <b>${clock(job.duration_seconds)}</b></span><span title="${escapeHTML(gpu)}"><b>${escapeHTML(gpu)}</b></span></div><button type="button" class="secondary-button card-open" data-open-job="${job.id}">${playable ? "映像を再生・詳細を見る" : "生成の詳細を見る"}</button></div>
     </article>`;
   }).join("");
 }
@@ -613,7 +614,7 @@ function openJob(jobId) {
   $("#dialogTitle").textContent = (job.output_path || "Generated video").split(/[\\/]/).pop();
   $("#dialogPrompt").textContent = request.prompt || "過去の生成結果";
   const peak = job.runtime_metrics?.cuda_peak_allocated_bytes;
-  $("#dialogStats").innerHTML = `<div><small>TIME</small><b>${clock(job.duration_seconds)}</b></div><div><small>FRAMES</small><b>${request.frames || "—"}</b></div><div><small>VRAM PEAK</small><b>${bytes(peak)}</b></div>`;
+  $("#dialogStats").innerHTML = `<div><small>TIME</small>生成時間 <b>${clock(job.duration_seconds)}</b></div><div><small>FRAMES</small><b>${request.frames || "—"}</b></div><div><small>VRAM PEAK</small><b>${bytes(peak)}</b></div>`;
   dialog.showModal();
 }
 

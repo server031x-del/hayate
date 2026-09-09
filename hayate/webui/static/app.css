@@ -647,3 +647,27 @@ select:focus-visible, summary:focus-visible, a:focus-visible {
 .model-config-picker { display: grid; gap: 8px; margin: 18px 0 10px; }
 .model-config-picker select { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: inherit; }
 #modelConfigurationNote { line-height: 1.7; margin-bottom: 12px; }
+
+/* Readable previews and history cards across desktop and mobile. */
+.library-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 22px; }
+.library-card { max-width: 720px; }
+.library-video video, .preview-stage video { object-fit: contain; background: #101820; }
+.library-video { display: grid; place-items: center; color: #d4deeb; font-size: 14px; }
+.library-video::after { display: none; }
+.preview-caption { position: absolute; bottom: 12px; left: 12px; padding: 7px 10px; border-radius: 8px; color: white; background: #101820d9; font-size: 12px; pointer-events: none; }
+.card-body { padding: 18px; }
+.card-meta span, .card-meta time { font-size: 12px; }
+.card-body h3 { font-size: 15px; line-height: 1.7; min-height: 51px; -webkit-line-clamp: 3; }
+.card-specs { flex-wrap: wrap; gap: 8px 14px; font-size: 12px; line-height: 1.6; }
+.card-open { width: 100%; margin-top: 16px; min-height: 42px; }
+.library-card.failed .card-meta span { color: var(--red); background: #ff718812; }
+.library-card.partial .card-meta span { color: var(--amber); }
+.library-tools { flex-wrap: wrap; align-items: center; }
+.library-tools input, .library-tools select { min-height: 44px; font-size: 13px; }
+#libraryCount { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.preview-stage { height: auto; min-height: 240px; aspect-ratio: 16/9; }
+.job-row { padding-top: 18px; padding-bottom: 18px; }
+.empty-library { font-size: 14px; text-align: center; grid-column: 1 / -1; padding: 24px; }
+:root[data-theme="clear"] .card-meta time, :root[data-theme="clear"] .card-specs { color: #526478; }
+:root[data-theme="clear"] .library-card.partial .card-meta span { color: #825c00; }
+@media (max-width: 600px) { .library-grid { grid-template-columns: 1fr; } .preview-stage { min-height: 190px; } }

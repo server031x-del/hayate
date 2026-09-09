@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ja">
+<html lang="ja" data-theme="clear">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#070b12">
+  <meta name="theme-color" content="#f3f7fb">
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -268,7 +268,7 @@
       </section>
 
       <section class="view" id="view-library">
-        <div class="view-toolbar library-toolbar"><div><h2>生成ライブラリ</h2><p>過去の映像、設定、実行統計をまとめて確認</p></div><div class="library-tools"><input id="librarySearch" type="search" placeholder="プロンプトやファイル名を検索"><select id="libraryFilter"><option value="all">すべて</option><option value="succeeded">完了</option><option value="failed">失敗</option></select></div></div>
+        <div class="view-toolbar library-toolbar"><div><h2>生成ライブラリ</h2><p>過去の映像、設定、実行統計をまとめて確認</p></div><div class="library-tools"><input id="librarySearch" aria-label="生成履歴を検索" type="search" placeholder="プロンプトやファイル名を検索"><select id="libraryFilter" aria-label="生成状態で絞り込み"><option value="all">すべて</option><option value="succeeded">完了</option><option value="partial">一部完了</option><option value="failed">失敗</option></select><span id="libraryCount" role="status"></span></div></div>
         <div class="library-grid" id="libraryGrid"><div class="empty-library">生成履歴を読み込んでいます…</div></div>
       </section>
 
