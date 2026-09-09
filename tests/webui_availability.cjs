@@ -62,3 +62,11 @@ assert(elements.get('#comfyOptions').hidden);
 run('state.modelSetup = null; updateModelAvailability()');
 assert(radios.every(r => r.disabled), 'A failed refresh must not keep stale availability');
 console.log('UI availability transitions passed');
+run('state.imageAsset = {id:"first"}; state.lastImageAsset = {id:"last"}');
+assert.equal(run('generationPayload().image_asset_id'), 'first');
+assert.equal(run('generationPayload().last_image_asset_id'), 'last');
+
+assert(/id="prompt"[^>]*><\/textarea>/.test(html), 'Prompt starts empty');
+assert(html.includes('id="samplePrompt"'));
+assert(html.includes('id="lastImageFile"'));
+console.log('Composer payload and empty initial prompt passed');

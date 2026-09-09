@@ -1,3 +1,4 @@
+const SAMPLE_PROMPT = "A premium cinematic commercial for a sleek metallic silver sports car. The same car accelerates along a coastal highway at golden hour, dynamic tracking shots, close-ups of LED headlights and aerodynamic bodywork, then a final hero shot in a modern city plaza. Realistic motion, synchronized engine sound and cinematic music, no text, no logo, no watermark.";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -9,6 +10,7 @@ const state = {
   eventSources: new Map(),
   duration: 5,
   imageAsset: null,
+  lastImageAsset: null,
   dialogTrigger: null,
   resourceTimer: null,
   elapsedTimer: null,
@@ -204,6 +206,8 @@ function applyProfile(profile) {
 function updateComfyControls() {
   const comfy = selectedProfile() === "comfy_fasth3";
   $("#comfyOptions").hidden = !comfy;
+  ["imageFile", "lastImageFile"].forEach(id => { $(`#${id}`).disabled = comfy; });
+  $("#imageGuidance").textContent = comfy ? "FastH3 INT8は現在テキスト生成のみ対応。画像指定は通常H3の構成で利用できます。" : "画像なしでも生成できます。終了画像を使う場合は開始画像も選択してください。";
   ["vsaKeep", "fastVaeBatch"].forEach(id => { $(`#${id}`).disabled = !comfy; });
   $("#promptCache").disabled = comfy;
   if (comfy) {
@@ -263,20 +267,23 @@ function updateResolution() {
     : info.description;
 }
 
-async function uploadImage(file) {
+async function uploadImage(file, last = false) {
+  if (selectedProfile() === "comfy_fasth3") return toast("FastH3 INT8は現在テキスト生成のみ対応です", "error");
+  const prefix = last ? "lastImage" : "image";
   if (!file) return;
   const form = new FormData();
   form.append("file", file);
-  const dropzone = $("#dropzone");
+  const dropzone = $(last ? "#lastDropzone" : "#dropzone");
   dropzone.classList.add("dragging");
   try {
     const asset = await api("/api/assets", { method: "POST", body: form });
-    state.imageAsset = asset;
-    $("#imagePreview").src = asset.url;
-    $("#imagePreview").hidden = false;
-    $("#removeImage").hidden = false;
+    state[last ? "lastImageAsset" : "imageAsset"] = asset;
+    $(`#${prefix}Name`).textContent = file.name;
+    $(`#${prefix}Preview`).src = asset.url;
+    $(`#${prefix}Preview`).hidden = false;
+    $(last ? "#removeLastImage" : "#removeImage").hidden = false;
     $("#task").value = "auto";
-    toast("開始画像を読み込みました");
+    toast(`${last ? "終了" : "開始"}画像を読み込みました`);
   } catch (error) {
     toast(error.message, "error");
   } finally {
@@ -284,12 +291,14 @@ async function uploadImage(file) {
   }
 }
 
-function removeImage() {
-  state.imageAsset = null;
-  $("#imageFile").value = "";
-  $("#imagePreview").removeAttribute("src");
-  $("#imagePreview").hidden = true;
-  $("#removeImage").hidden = true;
+function removeImage(last = false) {
+  const prefix = last ? "lastImage" : "image";
+  state[last ? "lastImageAsset" : "imageAsset"] = null;
+  $(`#${prefix}Name`).textContent = "画像未選択";
+  $(`#${prefix}File`).value = "";
+  $(`#${prefix}Preview`).removeAttribute("src");
+  $(`#${prefix}Preview`).hidden = true;
+  $(last ? "#removeLastImage" : "#removeImage").hidden = true;
 }
 
 function generationPayload() {
@@ -308,7 +317,7 @@ function generationPayload() {
     seed: Number($("#seed").value),
     filename: "hayate",
     image_asset_id: state.imageAsset?.id || null,
-    last_image_asset_id: null,
+    last_image_asset_id: state.lastImageAsset?.id || null,
     reference_asset_ids: [],
     use_prompt_cache: selectedProfile() !== "comfy_fasth3" && $("#promptCache").checked,
     steps: Number($("#steps").value),
@@ -446,6 +455,8 @@ async function submitGeneration(event) {
   event?.preventDefault();
   const button = $("#generateButton");
   const payload = generationPayload();
+  if (payload.last_image_asset_id && !payload.image_asset_id) return toast("終了画像を使う場合は開始画像も選択してください", "error");
+  if (payload.profile === "comfy_fasth3" && (payload.image_asset_id || payload.last_image_asset_id)) return toast("FastH3 INT8では画像を外してください", "error");
   if (!payload.prompt) return toast("プロンプトを入力してください", "error");
   if (!profileCanGenerate(payload.profile)) {
     return toast("選択した構成のモデルが未取得または未検証です。設定画面でモデル状態を確認してください", "error");
@@ -1253,6 +1264,7 @@ function bindEvents() {
   $$('[data-prompt-chip]').forEach((button) => button.addEventListener("click", () => {
     const prompt = $("#prompt"); prompt.value += `${prompt.value.trim() ? "\n\n" : ""}${button.dataset.promptChip}`; prompt.focus(); prompt.dispatchEvent(new Event("input"));
   }));
+  $("#samplePrompt").addEventListener("click", () => { state.promptTransform = null; $("#prompt").value = SAMPLE_PROMPT; $("#prompt").dispatchEvent(new Event("input")); $("#prompt").focus(); });
   $("#clearPrompt").addEventListener("click", () => { state.promptTransform = null; $("#prompt").value = ""; $("#prompt").dispatchEvent(new Event("input")); });
   $$('input[name="profile"]').forEach((radio) => radio.addEventListener("change", () => {
     $$(".profile-card").forEach((card) => card.classList.toggle("selected", card.contains(radio)));
@@ -1288,12 +1300,15 @@ function bindEvents() {
   $("#resolutionPreset").addEventListener("change", updateResolution);
   $("#width").addEventListener("input", updateResolution); $("#height").addEventListener("input", updateResolution);
   $("#randomSeed").addEventListener("click", () => $("#seed").value = Math.floor(Math.random() * 2147483647));
-  $("#imageFile").addEventListener("change", (event) => uploadImage(event.target.files?.[0]));
-  $("#removeImage").addEventListener("click", (event) => { event.preventDefault(); removeImage(); });
-  const dropzone = $("#dropzone");
-  ["dragenter", "dragover"].forEach((name) => dropzone.addEventListener(name, (event) => { event.preventDefault(); dropzone.classList.add("dragging"); }));
-  ["dragleave", "drop"].forEach((name) => dropzone.addEventListener(name, (event) => { event.preventDefault(); dropzone.classList.remove("dragging"); }));
-  dropzone.addEventListener("drop", (event) => uploadImage(event.dataTransfer.files?.[0]));
+  [false, true].forEach(last => {
+    const prefix = last ? "lastImage" : "image";
+    $(`#${prefix}File`).addEventListener("change", event => uploadImage(event.target.files?.[0], last));
+    $(last ? "#removeLastImage" : "#removeImage").addEventListener("click", () => removeImage(last));
+    const zone = $(last ? "#lastDropzone" : "#dropzone");
+    ["dragenter", "dragover"].forEach(name => zone.addEventListener(name, event => { event.preventDefault(); zone.classList.add("dragging"); }));
+    ["dragleave", "drop"].forEach(name => zone.addEventListener(name, event => { event.preventDefault(); zone.classList.remove("dragging"); }));
+    zone.addEventListener("drop", event => uploadImage(event.dataTransfer.files?.[0], last));
+  });
   $("#stopSaveButton").addEventListener("click", () => stopActive(true));
   $("#cancelButton").addEventListener("click", () => stopActive(false));
   $("#refreshButton").addEventListener("click", async () => { await Promise.all([refreshJobs(), pollResources()]); toast("最新情報に更新しました"); });
