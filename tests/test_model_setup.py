@@ -145,13 +145,16 @@ def test_model_setup_reports_partial_download_progress(tmp_path):
     def slow_downloader(_asset, current_artifact, temporary):
         target = temporary / current_artifact.remote_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as handle:
+        incomplete = temporary / ".cache" / "huggingface" / "download" / "hashed.etag.incomplete"
+        incomplete.parent.mkdir(parents=True, exist_ok=True)
+        with incomplete.open("wb") as handle:
             handle.write(payload[:first_chunk])
             handle.flush()
             entered.set()
             assert release.wait(4)
             handle.write(payload[first_chunk:])
             handle.flush()
+        incomplete.replace(target)
         return target
 
     service = ModelSetupService(tmp_path, downloader=slow_downloader, assets=(asset,))

@@ -439,7 +439,10 @@ class ModelSetupService:
             ),
             None,
         )
-        if asset.id in self._active_assets:
+        if asset.id in self._active_assets and (
+            latest_download is None
+            or latest_download.get("status") in {"queued", "verifying", "downloading"}
+        ):
             status = "downloading"
         elif latest_download and latest_download.get("status") in {"failed", "interrupted"}:
             status = "error"
@@ -582,9 +585,12 @@ class ModelSetupService:
             candidates.extend(target.parent.glob(f"{target.name}.*.incomplete"))
         try:
             for path in temp_root.rglob("*"):
-                if path.is_file() and any(
-                    path.name == name or path.name.startswith(f"{name}.")
-                    for name in names
+                if path.is_file() and (
+                    path.name.endswith(".incomplete")
+                    or any(
+                        path.name == name or path.name.startswith(f"{name}.")
+                        for name in names
+                    )
                 ):
                     candidates.append(path)
         except OSError:
