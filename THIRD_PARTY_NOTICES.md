@@ -81,3 +81,10 @@ Diffusers-format model distributed under the MiniMax H3 Community License;
 the model's license and acceptable-use terms remain the operator's
 responsibility. The pinned revision and its required directory contract are
 documented in `docs/FASTH3_WSL.md`.
+
+The optional Colab ComfyUI API backend installs pinned external Kijai/ComfyUI,
+ComfyUI-KJNodes, Mozer/ComfyUI-MiniMax-H3-MotionCache-FastVAE, the SolAttn
+MiniMax v5 node, and comfy-kitchen. Their upstream sources and license notices
+remain in the installed environment; they are not vendored here. Source links,
+revisions, and the workflow reference are listed in `docs/FASTH3_COMFYUI.md`.
+This backend does not use the older vendored H3VSA node described above.

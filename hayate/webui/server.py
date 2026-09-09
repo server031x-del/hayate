@@ -59,6 +59,7 @@ from hayate.webui.openai_settings import (
     validate_model,
 )
 from hayate.webui.settings import SettingsStore, WebUISettings
+from hayate.backends.minimax_h3.comfy_fasth3 import ComfyFastH3Backend, readiness as comfy_readiness
 
 PROFILE_NAMES = (
     "quality",
@@ -70,6 +71,7 @@ PROFILE_NAMES = (
     "fasth3",
     "fasth3_fast",
     "custom",
+    "comfy_fasth3",
 )
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ASSET_ID_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -178,8 +180,11 @@ class GenerationPayload(BaseModel):
         "fasth3",
         "fasth3_fast",
         "custom",
+        "comfy_fasth3",
     ] = "fast_sage_detail"
     task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
+    vsa_keep: Literal[5.0, 7.5, 10.0] = 10.0
+    fast_vae_batch: Literal[1, 2] = 2
     width: int = Field(default=512, ge=256, le=1536)
     height: int = Field(default=512, ge=256, le=1536)
     duration_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
@@ -521,7 +526,9 @@ def create_app(
 
     @app.get("/api/models/setup")
     async def get_model_setup():
-        return await asyncio.to_thread(model_setup.status)
+        result = await asyncio.to_thread(model_setup.status)
+        result["comfy_fasth3"] = comfy_readiness(root, result["assets"])
+        return result
 
     @app.post("/api/models/setup/prepare")
     async def prepare_model_setup(request: Request):
@@ -777,7 +784,10 @@ def create_app(
             ).hexdigest()[:24]
             prompt_cache = Path(current.prompt_cache_dir) / f"{cache_key}.safetensors"
         try:
-            if payload.profile in {"fasth3", "fasth3_fast"}:
+            if payload.profile == "comfy_fasth3":
+                assets = (await asyncio.to_thread(model_setup.status))["assets"]
+                backend = ComfyFastH3Backend(root, assets, payload.vsa_keep, payload.fast_vae_batch)
+            elif payload.profile in {"fasth3", "fasth3_fast"}:
                 backend = FastH3GenerationBackend(
                     current.fastvideo_model_path or str(root / "models" / "fastvideo"),
                     python=current.fastvideo_python_path or current.python_path,

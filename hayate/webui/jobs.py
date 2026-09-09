@@ -429,6 +429,8 @@ class JobManager:
             job = self.store.get(job_id)
             if job is None:
                 raise KeyError(job_id)
+            if (job.get("plan") or {}).get("backend") == "comfy_fasth3":
+                raise ValueError("FastH3 ComfyUIは途中保存に未対応です。キャンセルを使用してください")
             if job["status"] in FINAL_STATUSES:
                 return job
             if job["status"] == "queued":

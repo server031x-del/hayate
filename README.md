@@ -8,6 +8,12 @@ Goal: run large generative AI models efficiently on consumer hardware.
 
 Initial target: MiniMax H3.
 
+## FastH3 INT8をHAYATE UIで使う
+
+ComfyUI API経由の4-Step FastH3、VSA、Fast VAE Decodeに対応する経路を追加しました。
+Colabでの準備・モデル取得・制限は [導入手順](docs/FASTH3_COMFYUI.md) を参照してください。
+実GPUでの生成品質・速度は未検証です。
+
 Reference validation host (the runtime is not limited to this hardware):
 
 - NVIDIA GeForce RTX 3060 12 GB (v0.1 validation GPU)

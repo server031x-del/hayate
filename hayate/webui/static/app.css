@@ -653,6 +653,21 @@ select:focus-visible, summary:focus-visible, a:focus-visible {
 
 /* Unsupported hardware profiles stay hidden despite card display rules. */
 .profile-card[hidden] { display: none; }
+.profile-lock-note[hidden], #comfyOptions[hidden] { display: none; }
+.settings-fold { border: 1px solid var(--line); border-radius: 14px; margin: 0 0 24px; padding: 16px; }
+.settings-fold summary { cursor: pointer; font-size: 14px; font-weight: 700; color: var(--text); }
+.settings-fold summary small { margin-left: 12px; font-size: 12px; font-weight: 400; color: var(--quiet); }
+.settings-fold[open] summary { margin-bottom: 20px; }
+.setup-steps { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+.setup-steps span { padding: 8px 12px; border-radius: 20px; background: var(--surface-3); }
+.model-asset { padding: 16px; border-radius: 13px; gap: 16px; }
+.model-asset-title b { white-space: normal; line-height: 1.5; font-size: 13px; }
+.model-asset-status, .model-download-detail { font-size: 12px; line-height: 1.6; }
+.model-progress { height: 7px; margin-top: 10px; }
+.model-asset-action { height: 40px; min-width: 96px; font-size: 12px; }
+#modelConfigurationNote { line-height: 1.7; font-size: 13px; color: var(--muted); }
+.model-availability-note { margin-bottom: 14px; }
+#comfyOptions p { font-size: 12px; color: var(--muted); }
 
 .model-config-picker { display: grid; gap: 8px; margin: 18px 0 10px; }
 .model-config-picker select { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: inherit; }

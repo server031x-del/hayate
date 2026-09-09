@@ -198,6 +198,27 @@ function applyProfile(profile) {
   } else {
     updateProfileSummary();
   }
+  updateComfyControls();
+}
+
+function updateComfyControls() {
+  const comfy = selectedProfile() === "comfy_fasth3";
+  $("#comfyOptions").hidden = !comfy;
+  ["vsaKeep", "fastVaeBatch"].forEach(id => { $(`#${id}`).disabled = !comfy; });
+  $("#promptCache").disabled = comfy;
+  if (comfy) {
+    $("#profileAvailabilityNote").textContent = "FastH3 INT8の必要モデルと実行環境を準備済みです。";
+    $("#profileAvailabilityNote").className = "model-availability-note ready";
+    $("#profileAvailabilityNote").hidden = false;
+    $("#advancedAvailabilityNote").hidden = true;
+    $("#task").value = "t2va";
+    $("#easycache").checked = false;
+    $("#pdd").checked = false;
+    ["task", "steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "pdd", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach(id => {
+      setControlAvailability($(`#${id}`), false, "FastH3は専用設定を使用します");
+    });
+    $("#profileSummary").textContent = `FastH3 · 4-Step · VSA ${$("#vsaKeep").value}% · Fast VAE`;
+  }
 }
 
 function updateProfileSummary() {
@@ -279,6 +300,8 @@ function generationPayload() {
     prompt_transform_applied: Boolean(state.promptTransform),
     prompt_transform_template_version: state.promptTransform?.version || null,
     profile: selectedProfile(),
+    vsa_keep: Number($("#vsaKeep").value),
+    fast_vae_batch: Number($("#fastVaeBatch").value),
     task: $("#task").value,
     width, height,
     duration_seconds: state.duration,
@@ -287,7 +310,7 @@ function generationPayload() {
     image_asset_id: state.imageAsset?.id || null,
     last_image_asset_id: null,
     reference_asset_ids: [],
-    use_prompt_cache: $("#promptCache").checked,
+    use_prompt_cache: selectedProfile() !== "comfy_fasth3" && $("#promptCache").checked,
     steps: Number($("#steps").value),
     attention_backend: $("#attention").value,
     easycache: $("#easycache").checked,
@@ -304,6 +327,7 @@ function generationPayload() {
 }
 
 function profileCanGenerate(profile = selectedProfile()) {
+  if (profile === "comfy_fasth3") return state.modelSetup?.comfy_fasth3?.ready === true;
   const capabilities = modelCapabilities();
   if (profile === "fasth3" || profile === "fasth3_fast") {
     return profile === "fasth3_fast" ? capabilities.fastH3FastReady : capabilities.fastH3Ready;
@@ -511,7 +535,7 @@ function renderLive(job) {
     .replace("quality", "Quality");
   $$("#stageList span").forEach((span) => span.classList.toggle("done", progress >= Number(span.dataset.threshold)));
   const active = ["queued", "running"].includes(job.status);
-  $("#stopSaveButton").disabled = !active;
+  $("#stopSaveButton").disabled = !active || job.plan?.backend === "comfy_fasth3";
   $("#cancelButton").disabled = !active && job.status !== "stopping";
   $("#previewLabel").textContent = ["succeeded", "partial"].includes(job.status) ? "COMPLETE" : String(job.stage || "GENERATING").toUpperCase();
   const preview = $("#livePreview");
@@ -755,6 +779,7 @@ function modelAssetStatus(asset) {
 
 function modelAssetStatusLabel(asset, status) {
   if (status === "ready") {
+    if (asset.id === "transformer_fastvideo_vsa_4step") return "検証済み · FastH3 INT8で使用";
     if (asset.execution_supported === false) return "検証済み・HAYATE生成は未対応（外部ランタイム用）";
     if (asset.experimental) return "検証済み・実験経路（別ランタイム）";
     return asset.verified || asset.status === "verified" ? "検証済み・使用可能" : "ファイルあり（未検証）";
@@ -766,6 +791,7 @@ function modelAssetStatusLabel(asset, status) {
   if (status === "invalid") return "既存ファイルのサイズが一致しません。削除・配置を確認してください";
   if (status === "retry") return asset.error || asset.message || "取得に失敗しました。再試行できます";
   if (status === "present") {
+    if (asset.id === "transformer_fastvideo_vsa_4step") return "ファイルあり · 検証完了後にFastH3 INT8で使用できます";
     if (asset.execution_supported === false) return "ファイルあり・ヘッダー診断と完全性検証のみ（HAYATE生成は未対応）";
     return asset.experimental ? "ファイルあり・FastH3診断が必要です" : "ファイルあり・SHA-256検証が必要です";
   }
@@ -774,6 +800,7 @@ function modelAssetStatusLabel(asset, status) {
 
 const STANDARD_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32", "checkpoint_support"];
 const PDD_MODEL_IDS = ["pdd_fl2va_8step", "pdd_adaln_affine"];
+const COMFY_MODEL_IDS = ["transformer_fastvideo_vsa_4step", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32"];
 const MODEL_ASSET_SHORT_LABELS = {
   transformer_w4a8: "DiT",
   text_encoder_nvfp4_awq: "TEXT",
@@ -852,11 +879,14 @@ function updateModelAvailability() {
     ? `PDD追加モデルの未取得または未検証: ${modelMissingLabel(capabilities.pddMissing)}`
     : "モデル取得状況を確認中です";
 
-  const standardEnabled = !capabilities.known || capabilities.coreReady;
+  const standardEnabled = capabilities.coreReady;
+  const comfyStatus = state.modelSetup?.comfy_fasth3;
+  setProfileAvailability("comfy_fasth3", comfyStatus?.ready === true, comfyStatus?.message || "モデル・実行環境を確認中");
+  $("#comfyReadiness").textContent = comfyStatus?.message || "FastH3環境は未確認です。再スキャンしてください";
   ["fast_sage", "fast_sage_detail", "fast", "quality", "custom"].forEach((profile) => {
     setProfileAvailability(profile, standardEnabled, standardEnabled ? "" : standardReason);
   });
-  setProfileAvailability("pdd", !capabilities.known || capabilities.pddReady, capabilities.pddReady ? "" : pddReason);
+  setProfileAvailability("pdd", capabilities.pddReady, capabilities.pddReady ? "" : capabilities.coreReady ? pddReason : standardReason);
   setProfileAvailability(
     "fasth3",
     capabilities.fastH3Ready,
@@ -887,7 +917,7 @@ function updateModelAvailability() {
   // Sampler, task, memory and cache controls depend on the standard H3
   // checkpoint. Seed, prompt cache and GPU selection remain usable because
   // they are independent of a particular model package.
-  const dependentEnabled = !capabilities.known || capabilities.coreReady;
+  const dependentEnabled = capabilities.coreReady;
   const dependentReason = capabilities.coreReady ? "" : standardReason;
   ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
     setControlAvailability($(`#${id}`), dependentEnabled, dependentReason);
@@ -900,7 +930,7 @@ function updateModelAvailability() {
   });
   if (dependentEnabled && task?.value && $("#task option:checked")?.disabled) task.value = "auto";
 
-  const pddEnabled = !capabilities.known || capabilities.pddReady;
+  const pddEnabled = capabilities.pddReady;
   setControlAvailability($("#pdd"), pddEnabled, pddEnabled ? "" : pddReason);
   if (!pddEnabled && $("#pdd").checked) $("#pdd").checked = false;
   if (advancedNote) {
@@ -915,7 +945,7 @@ function updateModelAvailability() {
 
   const checked = $('input[name="profile"]:checked');
   if (!checked || checked.disabled) {
-    const fallback = ["fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
+    const fallback = ["comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
       .map((profile) => $(`input[name="profile"][value="${profile}"]`))
       .find((radio) => radio && !radio.disabled);
     if (fallback) {
@@ -925,11 +955,13 @@ function updateModelAvailability() {
     }
   }
   updateProfileSummary();
+  updateComfyControls();
 }
 
 function configurationAssets(assets) {
   const choice = $("#modelConfiguration").value;
   if (choice === "all") return assets;
+  if (choice === "comfy") return assets.filter(asset => COMFY_MODEL_IDS.includes(asset.id));
   const ids = choice === "pdd" ? [...STANDARD_MODEL_IDS, "pdd_fl2va_8step", "pdd_adaln_affine"] : STANDARD_MODEL_IDS;
   return assets.filter(asset => ids.includes(asset.id));
 }
@@ -960,6 +992,10 @@ function renderModelSetup(payload) {
     ? "実験用・別エンジン用も含みます。すべてのモデルを取得する必要はありません。"
     : `${choice === "standard" ? "迷ったらこの構成。高速・画質優先で使う通常H3の必要セットです。" : "標準セットに8-Step用の追加モデルを含みます。品質は標準構成と比較してください。"} 必要ファイル ${assets.length}件・合計 ${bytes(total)}（VRAM必要量ではありません）。取得後は「標準パスを適用」を押してください。`;
   $("#downloadConfiguration").disabled = configurationDownloading || choice === "all" || !$("#modelLicenseConsent").checked || !assets.some(asset => asset.downloadable && !["ready", "invalid", "downloading"].includes(modelAssetStatus(asset)));
+  if (choice === "comfy") {
+    const remaining = assets.filter(a => modelAssetStatus(a) !== "ready").reduce((sum, a) => sum + Number(a.size_bytes || 0), 0);
+    $("#modelConfigurationNote").textContent = `FastH3用4ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。取得済みのTEXT・VAEを共有します。取得後はFastH3 INT8を選択してください。`;
+  }
 
   const ready = assets.filter((asset) => modelAssetStatus(asset) === "ready").length;
   const activeCount = assets.filter((asset) => modelAssetStatus(asset) === "downloading").length;
@@ -990,8 +1026,11 @@ function renderModelSetup(payload) {
     const actionLabel = status === "ready" ? "準備済み" : status === "present" ? "検証" : status === "downloading" ? "取得中…" : status === "invalid" ? "要確認" : status === "retry" ? "再試行" : asset.downloadable === false ? "手動配置" : "ダウンロード";
     const progress = status === "downloading" && Number.isFinite(Number(asset.progress ?? asset.download_progress))
       ? `<div class="model-progress"><span style="width:${Math.max(0, Math.min(100, Number(asset.progress ?? asset.download_progress)))}%"></span></div>` : "";
-    const downloadDetail = status === "downloading" && asset.message
-      ? `<span class="model-download-detail">${escapeHTML(String(asset.message))}</span>` : "";
+    const elapsed = asset.setup_elapsed_seconds;
+    const timing = elapsed != null ? `${asset.download_finished_at ? "取得・検証時間" : "経過"} ${clock(elapsed)}` : "所要時間の記録なし";
+    const speed = status === "downloading" && asset.download_speed_bytes_per_sec > 0 ? ` · ${bytes(asset.download_speed_bytes_per_sec)}/s` : "";
+    const eta = status === "downloading" && asset.download_eta_seconds != null ? ` · 残り約 ${clock(asset.download_eta_seconds)}` : "";
+    const downloadDetail = `<span class="model-download-detail">${escapeHTML(timing + speed + eta)}</span>`;
     const notes = Array.isArray(asset.notes) && asset.notes.length
       ? `<span class="model-asset-note">${escapeHTML(asset.notes.join(" / "))}</span>` : "";
     const experimental = asset.experimental ? `<span class="model-asset-experimental">EXPERIMENTAL</span>` : "";
@@ -1085,6 +1124,8 @@ async function refreshModelSetup(silent = false) {
     renderModelSetup(payload);
   } catch (error) {
     $("#modelSetupSummary").textContent = "確認できません";
+    state.modelSetup = null;
+    updateModelAvailability();
     $("#modelAssetList").innerHTML = `<div class="model-setup-empty">${escapeHTML(error.message)}</div>`;
     if (!silent) toast(error.message, "error");
   }
@@ -1216,6 +1257,7 @@ function bindEvents() {
   $$('input[name="profile"]').forEach((radio) => radio.addEventListener("change", () => {
     $$(".profile-card").forEach((card) => card.classList.toggle("selected", card.contains(radio)));
     applyProfile(radio.value);
+    updateModelAvailability();
     if (radio.value === "custom") $("#advancedSettings").open = true;
   }));
   ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "pdd", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
@@ -1230,6 +1272,7 @@ function bindEvents() {
     if ($("#easycache").checked) $("#pdd").checked = false;
     updateProfileSummary();
   });
+  ["vsaKeep", "fastVaeBatch"].forEach(id => $(`#${id}`).addEventListener("change", updateComfyControls));
   $("#pdd").addEventListener("change", () => {
     if ($("#pdd").checked) {
       $("#easycache").checked = false;

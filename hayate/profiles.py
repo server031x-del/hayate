@@ -81,6 +81,10 @@ GENERATION_PROFILES = {
         approximate=True,
         pdd=True,
     ),
+    "comfy_fasth3": GenerationProfile(
+        "comfy_fasth3", "FastH3 INT8 · ComfyUI", 5, "sdpa", False,
+        0.0, 0.0, 1.0, 1, approximate=True,
+    ),
     "fasth3": GenerationProfile(
         "fasth3",
         "FastH3 VSA 4-Step（実験）",

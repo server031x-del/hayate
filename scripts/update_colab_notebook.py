@@ -460,6 +460,15 @@ print(HAYATE_WEBUI_TUNNEL_URL)
 
 """
 
+comfy_setup = """#@title FastH3 INT8の実行環境を準備（対応GPUのみ・サーバー起動なし）
+INSTALL_COMFY_FASTH3 = False #@param {type:"boolean"}
+if INSTALL_COMFY_FASTH3:
+    import runpy
+    runpy.run_path('/content/HAYATE-webui/colab/setup_comfy_fasth3.py', run_name='__main__')
+else:
+    print('スキップ。FastH3を使う場合はSM80以上のGPUでフラグを有効にしてください。')
+"""
+
 stop = """# HAYATE Studio WebUI: stop only the Colab VM processes created by this notebook
 STOP_SERVICES = False #@param {type:"boolean"}
 for name in (('HAYATE_WEBUI_TUNNEL_PROCESS', 'HAYATE_WEBUI_PROCESS') if STOP_SERVICES else ()):
@@ -488,6 +497,8 @@ nb["cells"] = [
     code(model_prepare),
     md("## 3. WebUIを起動・更新\nソースを更新し、モデル・設定・出力を保持します。標準は『高速・画質優先』です。"),
     code(setup),
+    md("## FastH3 INT8を使う場合\n次のセルで記事のComfyUI環境を準備します。モデルはWebUIの設定 → FastH3構成から取得できます。TEXT/VAEは通常H3と共有。CPU/T4では環境セルをスキップしてください。ComfyUIは生成ジョブ時だけHAYATEが起動・停止します。"),
+    code(comfy_setup),
     md("## 4. ブラウザで開く\n表示されるHTTPS URLを開いてください。Colab VMのlocalhostへ直接アクセスする必要はありません。"),
     code(tunnel),
     md("## 5. 終了時のみ実行\nWebUIと公開トンネルを停止します。"),

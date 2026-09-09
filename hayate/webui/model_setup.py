@@ -100,7 +100,7 @@ MODEL_ASSETS: tuple[ModelAsset, ...] = (
     ModelAsset(
         "transformer_fastvideo_vsa_4step",
         "transformer",
-        "MiniMax H3 FastH3 VSA DataFree 4-Step INT8 ConvRot（外部ComfyUI用）",
+        "FastH3 4-Step INT8 · HAYATE ComfyUI経路",
         "Kijai/MiniMax-H3-experimental",
         "f4cac997f880e93cf6940af61ee8d58ef31ff7f7",
         MINIMAX_LICENSE,
@@ -117,9 +117,8 @@ MODEL_ASSETS: tuple[ModelAsset, ...] = (
         experimental=True,
         execution_supported=False,
         notes=(
-            "ComfyUI単一ファイル形式。現行maybleMyers/h3 W4A8ローダーでは使用しません",
-            "HAYATEから直接生成する場合は公式FastVideoディレクトリ型スナップショットを別途配置します",
-            "このファイルはHAYATEではヘッダー診断・完全性確認のみ（外部ComfyUI/VSA用）",
+            "HAYATEのFastH3 INT8プロファイルで使用（ComfyUI専用環境が必要）",
+            "通常H3 / 公式FastVideoのローダーには使用しません",
         ),
     ),
     ModelAsset(
@@ -483,6 +482,15 @@ class ModelSetupService:
             "notes": list(asset.notes),
         }
         if latest_download:
+            started_at = latest_download.get("started_at")
+            finished_at = latest_download.get("finished_at")
+            elapsed = None
+            if started_at:
+                try:
+                    end = datetime.fromisoformat(finished_at) if finished_at else datetime.now(timezone.utc)
+                    elapsed = max(0., (end - datetime.fromisoformat(started_at)).total_seconds())
+                except (ValueError, TypeError):
+                    pass
             result.update(
                 download_id=latest_download.get("id"),
                 download_status=latest_download.get("status"),
@@ -493,6 +501,9 @@ class ModelSetupService:
                 download_speed_bytes_per_sec=latest_download.get("download_speed_bytes_per_sec"),
                 download_eta_seconds=latest_download.get("download_eta_seconds"),
                 download_elapsed_seconds=latest_download.get("download_elapsed_seconds"),
+                setup_elapsed_seconds=round(elapsed, 1) if elapsed is not None else None,
+                download_started_at=started_at,
+                download_finished_at=finished_at,
                 message=latest_download.get("message"),
             )
             if latest_download.get("status") in {"failed", "interrupted"}:

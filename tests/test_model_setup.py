@@ -77,6 +77,11 @@ def test_model_setup_prepares_standard_directories_and_verifies_download(tmp_pat
     assert detected["exists"] is True
     assert detected["verified"] is True
     assert detected["status"] == "verified"
+    assert detected["setup_elapsed_seconds"] >= 0
+    assert detected["download_finished_at"] is not None
+    # Completed durations remain fixed when the UI polls or the server restarts.
+    recovered = ModelSetupService(tmp_path, downloader=_downloader, assets=(asset,))
+    assert recovered.status()["assets"][0]["setup_elapsed_seconds"] == detected["setup_elapsed_seconds"]
 
 
 def test_model_setup_refuses_to_overwrite_unexpected_existing_file(tmp_path):

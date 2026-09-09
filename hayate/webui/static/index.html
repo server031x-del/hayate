@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260909-model-availability-v1">
+  <link rel="stylesheet" href="/assets/app.css?v=20260909-comfy-fasth3">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -77,6 +77,12 @@
             </div>
             <p class="model-availability-note" id="profileAvailabilityNote" hidden aria-live="polite"></p>
             <div class="profile-grid" id="profileGrid">
+              <label class="profile-card">
+                <input type="radio" name="profile" value="comfy_fasth3" disabled>
+                <span class="profile-icon fasth3">H4</span>
+                <span><b>FastH3 INT8</b><small>4-Step · VSA · Fast VAE</small></span>
+                <em>ComfyUI</em>
+              </label>
               <label class="profile-card">
                 <input type="radio" name="profile" value="fast_sage">
                 <span class="profile-icon speed">S</span>
@@ -198,6 +204,14 @@
             <details class="advanced" id="advancedSettings">
               <summary><span>詳細設定</span><small>Sampler・EasyCache・メモリ</small><i></i></summary>
               <div class="advanced-body">
+                <div id="comfyOptions" class="easycache-box" hidden>
+                  <b>FastH3 · 画質と速度</b>
+                  <p>テキストから動画＋音声を4ステップで生成。開始画像は未対応です。各ジョブでモデルを読み込みます。</p>
+                  <div class="setting-grid">
+                    <label><span>VSA保持率</span><select id="vsaKeep"><option value="10">10% · 品質比較の基準</option><option value="7.5">7.5% · バランス</option><option value="5">5% · 速度優先（記事設定）</option></select></label>
+                    <label><span>VAEタイル並列数</span><select id="fastVaeBatch"><option value="2">2 · 高速</option><option value="1">1 · メモリ節約</option></select></label>
+                  </div>
+                </div>
                 <p class="model-availability-note" id="advancedAvailabilityNote" hidden aria-live="polite"></p>
                 <div class="setting-grid">
                   <label><span>タスク</span><select id="task"><option value="auto">Auto</option><option value="t2va">T2V + Audio</option><option value="fl2va">I2V / FL2V</option><option value="ref2va">Reference</option></select></label>
@@ -278,7 +292,7 @@
         <div class="view-toolbar"><div><h2>エンジン設定</h2><p>変更は次に追加するジョブから適用されます</p></div><button class="primary-button small" id="saveSettings">設定を保存</button></div>
         <div class="settings-layout">
           <div class="settings-panel panel">
-            <div class="section-heading"><div><span class="step-number">A</span><h2>Runtime paths</h2></div></div>
+            <details class="settings-fold"><summary>保存先・実行環境 <small>通常は変更不要</small></summary>
             <div class="path-fields">
               <label><span>Model registry</span><div><input id="settingConfig" type="text"><i data-ready="config_path"></i></div><small>量子化モデル4種を定義するYAML</small></label>
               <label><span>maybleMyers/h3 checkout</span><div><input id="settingUpstream" type="text"><i data-ready="upstream_path"></i></div><small>監査済みcommitのMiniMax H3 Engine</small></label>
@@ -294,7 +308,10 @@
               <label><span>FastVideo Python（実験）</span><div><input id="settingFastVideoPython" type="text"><i class="optional-ready"></i></div><small>FastVideoをインストールしたPython。空欄ならHAYATEのPythonを使用します。</small></label>
             </div>
             <div class="divider"></div>
-            <div class="section-heading compact"><div><span class="step-number">B</span><h2>モデルセットアップ</h2></div><span class="counter" id="modelSetupSummary">未確認</span></div>
+            </details>
+            <div class="section-heading compact"><div><span class="step-number">01</span><h2>モデルを準備</h2></div><span class="counter" id="modelSetupSummary">未確認</span></div>
+            <div class="setup-steps"><span>1 構成を選択</span><span>2 ライセンス確認・取得</span><span>3 生成画面で選択</span></div>
+            <p id="comfyReadiness" class="model-availability-note" role="status">FastH3環境を確認中…</p>
             <div class="model-setup-box">
               <div class="model-setup-head">
                 <div><b>MiniMax H3モデル</b><small>標準フォルダを作成し、検証済みの公開モデルだけを再開可能な形で取得します。</small></div>
@@ -305,6 +322,7 @@
                 </div>
               </div>
               <label class="model-config-picker"><span>おすすめの構成</span><select id="modelConfiguration">
+                <option value="comfy">FastH3：高速4-Step · INT8＋共有VAE</option>
                 <option value="standard">おすすめ：品質・速度バランス（通常H3 W4A8）</option>
                 <option value="pdd">比較用：PDD 8-Step（標準構成＋追加LoRA）</option>
                 <option value="all">上級者向け：すべてのモデルを表示</option>
@@ -314,20 +332,22 @@
               <label class="model-license-consent"><input id="modelLicenseConsent" type="checkbox"><span>各モデルのライセンスと利用規約を確認しました（ダウンロードを有効化）</span></label>
               <div class="model-asset-list" id="modelAssetList"><div class="model-setup-empty">モデル状態を確認しています…</div></div>
               <p class="model-setup-note">大容量ファイルはGitに含めません。取得先・revision・SHA-256を固定し、中断後も安全に再実行できます。利用規約と容量を確認してからダウンロードしてください。</p>
-              <div class="fasth3-status-box">
+              <details class="settings-fold"><summary>公式FastVideo経路 <small>大容量・上級者向け</small></summary><div class="fasth3-status-box">
                 <div><b>FastH3 / VSA 実験経路</b><small>通常のmayble H3とは別エンジンです。重みを読み込まずに利用条件だけ診断できます。</small><a class="model-source fasth3-source-link" href="https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree" target="_blank" rel="noreferrer">公式FastH3 v1モデルを開く</a><small>約148GB（約138GiB）の公式スナップショットは <code>scripts/setup_fasth3_wsl.ps1 -DownloadModel</code> を明示実行した場合だけ取得します。</small></div>
                 <button type="button" class="secondary-button small" id="checkFastH3">利用条件を診断</button>
                 <p id="fastH3Status" class="fasth3-status" role="status">未診断</p>
               </div>
+              </details>
             </div>
             <div class="divider"></div>
-            <div class="section-heading compact"><div><span class="step-number">C</span><h2>AI prompt director</h2></div><span class="counter" id="openaiKeyStatus">未設定</span></div>
+            <details class="settings-fold"><summary>AIプロンプト作成 <small id="openaiKeyStatus">未設定</small></summary>
             <div class="ai-settings-fields">
               <label><span>OpenAI model ID</span><input id="settingOpenAIModel" type="text" autocomplete="off" placeholder="gpt-5.6-terra"><small>標準は品質と費用のバランスが良い gpt-5.6-terra。任意の対応モデルIDへ変更できます。</small></label>
               <label><span>OpenAI API key</span><input id="settingOpenAIKey" type="password" autocomplete="new-password" placeholder="保存済みなら空欄のまま"><small>キーは画面に再表示せず、Windows Credential Managerへ保存します。未対応環境ではこのサーバーの実行中だけ保持します。</small></label>
               <label class="ai-clear-key"><input id="clearOpenAIKey" type="checkbox"><span>保存済みのAPIキーを消去する</span></label>
             </div>
             <p class="ai-settings-note">AIプロンプト作成時は概要と、選択中のタスク・長さ・解像度・音声設定（および改善時の現在プロンプト）がOpenAIへ送信されます。APIキーの登録とAI作成はサーバーPCのローカル接続または許可済みVPNからのみ実行できます。生成エンジンの子プロセスへAPIキーは渡しません。</p>
+            </details>
           </div>
           <aside class="settings-aside">
             <div class="panel info-panel"><span>LAN READY</span><h3>LANからアクセスできます</h3><p>標準では0.0.0.0:7860で待ち受けます。認証はないため、信頼できるネットワークでのみ使用してください。</p></div>
@@ -391,6 +411,6 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <!-- Legacy cache key retained in this marker for clients that fingerprint the previous build. -->
   <!-- app.js?v=20260909-model-availability-v1 -->
-  <script src="/assets/app.js?v=20260909-model-availability-v1" defer></script>
+  <script src="/assets/app.js?v=20260909-comfy-fasth3" defer></script>
 </body>
 </html>
