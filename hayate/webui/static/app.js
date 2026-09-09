@@ -783,7 +783,10 @@ function renderModelSetup(payload) {
   $("#downloadConfiguration").disabled = configurationDownloading || choice === "all" || !$("#modelLicenseConsent").checked || !assets.some(asset => asset.downloadable && !["ready", "invalid", "downloading"].includes(modelAssetStatus(asset)));
 
   const ready = assets.filter((asset) => modelAssetStatus(asset) === "ready").length;
-  $("#modelSetupSummary").textContent = assets.length ? `${ready} / ${assets.length} 準備済み` : "モデル未確認";
+  const activeCount = assets.filter((asset) => modelAssetStatus(asset) === "downloading").length;
+  $("#modelSetupSummary").textContent = assets.length
+    ? `${ready} / ${assets.length} 準備済み${activeCount ? ` · ${activeCount}件ダウンロード中` : ""}`
+    : "モデル未確認";
   const list = $("#modelAssetList");
   if (!assets.length) {
     list.innerHTML = '<div class="model-setup-empty">モデルカタログを読み込めませんでした。再スキャンしてください。</div>';
@@ -808,6 +811,8 @@ function renderModelSetup(payload) {
     const actionLabel = status === "ready" ? "準備済み" : status === "present" ? "検証" : status === "downloading" ? "取得中…" : status === "invalid" ? "要確認" : status === "retry" ? "再試行" : asset.downloadable === false ? "手動配置" : "ダウンロード";
     const progress = status === "downloading" && Number.isFinite(Number(asset.progress ?? asset.download_progress))
       ? `<div class="model-progress"><span style="width:${Math.max(0, Math.min(100, Number(asset.progress ?? asset.download_progress)))}%"></span></div>` : "";
+    const downloadDetail = status === "downloading" && asset.message
+      ? `<span class="model-download-detail">${escapeHTML(String(asset.message))}</span>` : "";
     const notes = Array.isArray(asset.notes) && asset.notes.length
       ? `<span class="model-asset-note">${escapeHTML(asset.notes.join(" / "))}</span>` : "";
     const experimental = asset.experimental ? `<span class="model-asset-experimental">EXPERIMENTAL</span>` : "";
@@ -815,14 +820,14 @@ function renderModelSetup(payload) {
       <div class="model-asset-main">
         <div class="model-asset-title"><span class="model-asset-role">${escapeHTML(role)}</span>${experimental}<b title="${escapeHTML(filename)}">${escapeHTML(asset.label || filename)}</b></div>
         <span class="model-asset-meta" title="${escapeHTML(path)}">${escapeHTML(filename)} · ${escapeHTML(size)}${provenance ? ` · ${provenance}` : ""}</span>
-        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${notes}${progress}
+        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${downloadDetail}${notes}${progress}
       </div>
       <button type="button" class="model-asset-action" data-model-download="${escapeHTML(asset.id || "")}" ${canDownload ? "" : "disabled"}>${actionLabel}</button>
     </article>`;
   }).join("");
   const active = allAssets.some((asset) => modelAssetStatus(asset) === "downloading");
   if (active && !state.modelTimer) {
-    state.modelTimer = setInterval(() => refreshModelSetup(true), 4000);
+    state.modelTimer = setInterval(() => refreshModelSetup(true), 2000);
   } else if (!active && state.modelTimer) {
     clearInterval(state.modelTimer);
     state.modelTimer = null;

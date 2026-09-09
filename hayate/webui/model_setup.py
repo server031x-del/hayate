@@ -15,6 +15,7 @@ from typing import Callable
 
 HF_ENDPOINT = "https://huggingface.co"
 MIN_FREE_SPACE_MARGIN = 512 * 1024 * 1024
+DOWNLOAD_PROGRESS_INTERVAL_SECONDS = 1.0
 
 
 class ModelSetupError(RuntimeError):
@@ -253,6 +254,19 @@ def _format_bytes(value: int) -> str:
     return f"{value} B"
 
 
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None or seconds <= 0:
+        return "計算中"
+    total = max(1, int(round(seconds)))
+    minutes, remainder = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}時間{minutes:02d}分"
+    if minutes:
+        return f"{minutes}分{remainder:02d}秒"
+    return f"{remainder}秒"
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -471,6 +485,11 @@ class ModelSetupService:
                 download_status=latest_download.get("status"),
                 download_progress=latest_download.get("progress"),
                 progress=latest_download.get("progress"),
+                bytes_downloaded=latest_download.get("bytes_downloaded"),
+                bytes_total=latest_download.get("bytes_total", asset.size_bytes),
+                download_speed_bytes_per_sec=latest_download.get("download_speed_bytes_per_sec"),
+                download_eta_seconds=latest_download.get("download_eta_seconds"),
+                download_elapsed_seconds=latest_download.get("download_elapsed_seconds"),
                 message=latest_download.get("message"),
             )
             if latest_download.get("status") in {"failed", "interrupted"}:
@@ -518,6 +537,9 @@ class ModelSetupService:
                 "bytes_total": asset.size_bytes,
                 "progress": 0.0,
                 "message": "ダウンロード待機中",
+                "download_speed_bytes_per_sec": 0.0,
+                "download_eta_seconds": None,
+                "download_elapsed_seconds": 0.0,
                 "started_at": _utc_now(),
                 "finished_at": None,
             }
@@ -542,6 +564,84 @@ class ModelSetupService:
         with self._lock:
             self._state["downloads"][download_id].update(values)
             self._save_state()
+
+    @staticmethod
+    def _artifact_download_bytes(temp_root: Path, artifact: ModelArtifact) -> int:
+        """Return the largest visible partial file for an active artifact.
+
+        huggingface_hub writes either the target file or a temporary
+        ``.incomplete`` file below ``local_dir``.  Looking at both names lets
+        the WebUI show real progress without depending on a downloader
+        callback that the public API does not expose.
+        """
+        names = {Path(artifact.remote_path).name, Path(artifact.relative_path).name}
+        candidates: list[Path] = []
+        for relative in (artifact.remote_path, artifact.relative_path):
+            target = temp_root / relative
+            candidates.extend((target, target.with_name(f"{target.name}.incomplete")))
+            candidates.extend(target.parent.glob(f"{target.name}.*.incomplete"))
+        try:
+            for path in temp_root.rglob("*"):
+                if path.is_file() and any(
+                    path.name == name or path.name.startswith(f"{name}.")
+                    for name in names
+                ):
+                    candidates.append(path)
+        except OSError:
+            pass
+        sizes: list[int] = []
+        seen: set[str] = set()
+        for path in candidates:
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if path.is_file():
+                    sizes.append(path.stat().st_size)
+            except OSError:
+                continue
+        return min(artifact.size_bytes, max(sizes, default=0))
+
+    def _monitor_artifact_download(
+        self,
+        download_id: str,
+        asset: ModelAsset,
+        artifact: ModelArtifact,
+        temp_root: Path,
+        completed: int,
+        stop: threading.Event,
+    ) -> None:
+        started = time.monotonic()
+        name = Path(artifact.remote_path).name
+        while not stop.wait(DOWNLOAD_PROGRESS_INTERVAL_SECONDS):
+            try:
+                partial = self._artifact_download_bytes(temp_root, artifact)
+                elapsed = max(0.1, time.monotonic() - started)
+                total = min(asset.size_bytes, completed + partial)
+                speed = partial / elapsed if partial else 0.0
+                remaining = max(0, asset.size_bytes - total)
+                eta = remaining / speed if speed > 0 else None
+                speed_label = f"{_format_bytes(int(speed))}/秒" if speed > 0 else "速度計測中"
+                message = (
+                    f"取得中: {name} · {_format_bytes(total)} / {_format_bytes(asset.size_bytes)}"
+                    f" · {speed_label} · 経過 {_format_duration(elapsed)}"
+                    f" · 残り {_format_duration(eta)}"
+                )
+                self._update_download(
+                    download_id,
+                    status="downloading",
+                    bytes_downloaded=total,
+                    progress=round(total * 100 / asset.size_bytes, 2),
+                    download_speed_bytes_per_sec=round(speed, 2),
+                    download_eta_seconds=round(eta, 1) if eta is not None else None,
+                    download_elapsed_seconds=round(elapsed, 1),
+                    message=message,
+                )
+            except Exception:
+                # A disappearing temporary file or a service shutdown must
+                # never interrupt the actual downloader.
+                return
 
     @staticmethod
     def _replace_with_retry(source: Path, target: Path) -> None:
@@ -607,7 +707,26 @@ class ModelSetupService:
                         progress=round(completed * 100 / asset.size_bytes, 2),
                         message=f"取得中: {Path(artifact.remote_path).name}",
                     )
-                    downloaded = self._downloader(asset, artifact, temp_root).resolve()
+                    progress_stop = threading.Event()
+                    progress_thread = threading.Thread(
+                        target=self._monitor_artifact_download,
+                        args=(
+                            download_id,
+                            asset,
+                            artifact,
+                            temp_root,
+                            completed,
+                            progress_stop,
+                        ),
+                        name=f"hayate-model-progress-{asset.id}",
+                        daemon=True,
+                    )
+                    progress_thread.start()
+                    try:
+                        downloaded = self._downloader(asset, artifact, temp_root).resolve()
+                    finally:
+                        progress_stop.set()
+                        progress_thread.join(timeout=2)
                     try:
                         downloaded.relative_to(temp_root)
                     except ValueError as exc:
@@ -619,6 +738,8 @@ class ModelSetupService:
                     self._update_download(
                         download_id,
                         status="verifying",
+                        bytes_downloaded=completed + artifact.size_bytes,
+                        progress=round((completed + artifact.size_bytes) * 100 / asset.size_bytes, 2),
                         message=f"SHA256確認中: {Path(artifact.remote_path).name}",
                     )
                     if _sha256(downloaded) != artifact.sha256:

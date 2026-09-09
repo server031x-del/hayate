@@ -120,6 +120,61 @@ def test_model_setup_blocks_duplicate_download_for_same_asset(tmp_path):
     assert _wait(service, first["id"])["status"] == "completed"
 
 
+def test_model_setup_reports_partial_download_progress(tmp_path):
+    payload = b"partial-progress-payload" * (128 * 1024)
+    artifact = ModelArtifact(
+        remote_path="model.safetensors",
+        relative_path="test/model.safetensors",
+        size_bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+    )
+    asset = ModelAsset(
+        id="progress_asset",
+        role="transformer",
+        label="Progress model",
+        repo_id="verified/repository",
+        revision="0123456789abcdef",
+        license="Test license",
+        license_url="https://huggingface.co/verified/repository",
+        artifacts=(artifact,),
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    first_chunk = len(payload) // 2
+
+    def slow_downloader(_asset, current_artifact, temporary):
+        target = temporary / current_artifact.remote_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as handle:
+            handle.write(payload[:first_chunk])
+            handle.flush()
+            entered.set()
+            assert release.wait(4)
+            handle.write(payload[first_chunk:])
+            handle.flush()
+        return target
+
+    service = ModelSetupService(tmp_path, downloader=slow_downloader, assets=(asset,))
+    job = service.start_download(asset.id, license_accepted=True)
+    assert entered.wait(2)
+    observed = None
+    try:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            current = service.downloads()[job["id"]]
+            if current["bytes_downloaded"] >= first_chunk:
+                observed = current
+                break
+            time.sleep(0.05)
+        assert observed is not None
+        assert observed["progress"] > 0
+        assert observed["download_speed_bytes_per_sec"] > 0
+        assert "残り" in observed["message"]
+    finally:
+        release.set()
+    assert _wait(service, job["id"])["status"] == "completed"
+
+
 def test_model_setup_recovers_only_recorded_stale_temporary_directory(tmp_path):
     models = tmp_path / "models"
     stale = models / ".hayate-download-recorded"
