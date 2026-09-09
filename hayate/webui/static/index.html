@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260909-studio-composer">
+  <link rel="stylesheet" href="/assets/app.css?v=20260909-fasth3-images">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -222,7 +222,7 @@
               <div class="advanced-body">
                 <div id="comfyOptions" class="easycache-box" hidden>
                   <b>FastH3 · 画質と速度</b>
-                  <p>テキストから動画＋音声を4ステップで生成。開始画像は未対応です。各ジョブでモデルを読み込みます。</p>
+                  <p>テキスト・開始／終了画像から動画＋音声を4ステップで生成。各ジョブでモデルを読み込みます。</p>
                   <div class="setting-grid">
                     <label><span>VSA保持率</span><select id="vsaKeep"><option value="10">10% · 品質比較の基準</option><option value="7.5">7.5% · バランス</option><option value="5">5% · 速度優先（記事設定）</option></select></label>
                     <label><span>VAEタイル並列数</span><select id="fastVaeBatch"><option value="2">2 · 高速</option><option value="1">1 · メモリ節約</option></select></label>
@@ -427,6 +427,6 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <!-- Legacy cache key retained in this marker for clients that fingerprint the previous build. -->
   <!-- app.js?v=20260909-model-availability-v1 -->
-  <script src="/assets/app.js?v=20260909-studio-composer" defer></script>
+  <script src="/assets/app.js?v=20260909-fasth3-images" defer></script>
 </body>
 </html>

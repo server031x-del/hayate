@@ -147,3 +147,24 @@ def test_worker_api_to_saved_output_and_owned_cleanup(tmp_path, monkeypatch, vsa
             comfy_worker.run(runtime, output, graph)
         assert not output.exists()
     assert stopped == [True]
+
+def test_image_graph_and_command(tmp_path):
+    from PIL import Image
+    from dataclasses import replace
+    from hayate.backends.minimax_h3.comfy_fasth3 import build_graph
+    graph = build_graph('move', 1, 512, 288, 124, first_image=True, last_image=True)
+    assert graph['7']['inputs']['first_frame'] == ['18', 0]
+    assert graph['7']['inputs']['last_frame'] == ['19', 0]
+    assert graph['18']['inputs']['image'] == 'first.png'
+    assert graph['19']['class_type'] == 'LoadImage'
+    plain = build_graph('move', 1, 512, 288, 124)
+    assert '18' not in plain and 'first_frame' not in plain['7']['inputs']
+
+    backend = ComfyFastH3Backend(tmp_path, prepared(tmp_path))
+    image = tmp_path / "frame.png"
+    Image.new("RGB", (32, 32)).save(image)
+    req = GenerationRequest("move", tmp_path, tmp_path / "out.mp4")
+    plan = backend.plan(replace(req, image_path=image, last_image_path=image))
+    assert plan.executable
+    assert "--first-image" in plan.command and "--last-image" in plan.command
+    assert not backend.plan(replace(req, last_image_path=image)).executable

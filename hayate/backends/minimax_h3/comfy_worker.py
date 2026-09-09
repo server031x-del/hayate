@@ -45,7 +45,7 @@ def validate_nodes(info, graph):
                 raise RuntimeError(f"Unsupported choice/model {kind}.{name}: {value}")
 
 
-def run(runtime, output, graph, timeout=7200):
+def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None):
     import websocket
     output.parent.mkdir(parents=True, exist_ok=True)
     # Each job owns its server, so cancellation cannot interrupt another API client.
@@ -60,9 +60,16 @@ def run(runtime, output, graph, timeout=7200):
             return json.load(response)
     raw_dir = output.parent / ".comfy" / output.stem
     raw_dir.mkdir(parents=True, exist_ok=True)
+    input_dir = raw_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    from PIL import Image, ImageOps
+    for source, name in ((first_image, "first.png"), (last_image, "last.png")):
+        if source:
+            with Image.open(source) as img:
+                ImageOps.exif_transpose(img).convert("RGB").save(input_dir / name)
     log_path = output.with_suffix(".comfy.log")
     args = [sys.executable, "-u", str(runtime / "main.py"), "--listen", "127.0.0.1", "--port", str(port),
-            "--disable-auto-launch", "--output-directory", str(raw_dir),
+            "--disable-auto-launch", "--output-directory", str(raw_dir), "--input-directory", str(input_dir),
             "--extra-model-paths-config", str(runtime / "hayate-models.yaml"),
             "--enable-dynamic-vram", "--disable-pinned-memory", "--async-offload", "2"]
     process = None
@@ -153,5 +160,7 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--graph", required=True)
+    parser.add_argument("--first-image", type=Path)
+    parser.add_argument("--last-image", type=Path)
     args = parser.parse_args()
-    run(args.runtime, args.output, json.loads(args.graph))
+    run(args.runtime, args.output, json.loads(args.graph), first_image=args.first_image, last_image=args.last_image)

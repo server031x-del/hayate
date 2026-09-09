@@ -206,8 +206,8 @@ function applyProfile(profile) {
 function updateComfyControls() {
   const comfy = selectedProfile() === "comfy_fasth3";
   $("#comfyOptions").hidden = !comfy;
-  ["imageFile", "lastImageFile"].forEach(id => { $(`#${id}`).disabled = comfy; });
-  $("#imageGuidance").textContent = comfy ? "FastH3 INT8は現在テキスト生成のみ対応。画像指定は通常H3の構成で利用できます。" : "画像なしでも生成できます。終了画像を使う場合は開始画像も選択してください。";
+  ["imageFile", "lastImageFile"].forEach(id => { $(`#${id}`).disabled = false; });
+  $("#imageGuidance").textContent = comfy ? "FastH3でも開始・終了画像を指定できます。終了画像には開始画像が必要です。" : "画像なしでも生成できます。終了画像を使う場合は開始画像も選択してください。";
   ["vsaKeep", "fastVaeBatch"].forEach(id => { $(`#${id}`).disabled = !comfy; });
   $("#promptCache").disabled = comfy;
   if (comfy) {
@@ -268,7 +268,6 @@ function updateResolution() {
 }
 
 async function uploadImage(file, last = false) {
-  if (selectedProfile() === "comfy_fasth3") return toast("FastH3 INT8は現在テキスト生成のみ対応です", "error");
   const prefix = last ? "lastImage" : "image";
   if (!file) return;
   const form = new FormData();
@@ -456,7 +455,6 @@ async function submitGeneration(event) {
   const button = $("#generateButton");
   const payload = generationPayload();
   if (payload.last_image_asset_id && !payload.image_asset_id) return toast("終了画像を使う場合は開始画像も選択してください", "error");
-  if (payload.profile === "comfy_fasth3" && (payload.image_asset_id || payload.last_image_asset_id)) return toast("FastH3 INT8では画像を外してください", "error");
   if (!payload.prompt) return toast("プロンプトを入力してください", "error");
   if (!profileCanGenerate(payload.profile)) {
     return toast("選択した構成のモデルが未取得または未検証です。設定画面でモデル状態を確認してください", "error");

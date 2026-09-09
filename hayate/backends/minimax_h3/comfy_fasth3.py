@@ -16,14 +16,14 @@ AUDIO = "minimax_h3_audio_vae_fp32.safetensors"
 
 
 def build_graph(prompt: str, seed: int, width: int, height: int, frames: int,
-                keep: float = 10, tile_batch: int = 2) -> dict:
+                keep: float = 10, tile_batch: int = 2, first_image=False, last_image=False) -> dict:
     if keep not in (5, 7.5, 10) or tile_batch not in (1, 2):
         raise ValueError("Unsupported VSA keep / tile batch")
     if not prompt.strip() or width % 32 or height % 32 or min(width, height) < 256 or frames % 17 != 5:
         raise ValueError("Invalid FastH3 dimensions, frames or prompt")
     def node(kind, **inputs):
         return {"class_type": kind, "inputs": inputs}
-    return {
+    graph = {
         "1": node("UNETLoader", unet_name=MODEL, weight_dtype="default"),
         "2": node("MiniMaxH3SigmaShift", model=["1", 0], shift_video=12., shift_audio=3.),
         "17": node("MiniMaxChunkFeedForward", model=["2", 0], chunks=2, seq_threshold=4096),
@@ -46,6 +46,12 @@ def build_graph(prompt: str, seed: int, width: int, height: int, frames: int,
         "15": node("CreateVideo", images=["13", 0], audio=["14", 0], fps=24., bit_depth=8, color_space="sRGB"),
         "16": node("SaveVideo", video=["15", 0], filename_prefix="hayate", format="mp4", codec="h264"),
     }
+    for enabled, nid, field, name in ((first_image, "18", "first_frame", "first.png"), (last_image, "19", "last_frame", "last.png")):
+        if enabled:
+            graph[nid] = node("LoadImage", image=name)
+            graph["7"]["inputs"][field] = [nid, 0]
+    return graph
+
 
 
 def runtime_paths(root: Path):
@@ -74,14 +80,24 @@ class ComfyFastH3Backend:
     def plan(self, request: GenerationRequest) -> GenerationPlan:
         status = readiness(self.root, self.assets)
         issues = [] if status["ready"] else [status["message"]]
-        if request.task not in ("auto", "t2va") or request.image_path or request.last_image_path or request.references:
-            issues.append("FastH3はテキストから動画＋音声のみ対応です。開始画像を外してください")
+        if request.task not in ("auto", "t2va", "fl2va") or request.references:
+            issues.append("参照タスクは未対応です。開始・終了画像を使用してください")
+        if request.task == "fl2va" and not request.image_path:
+            issues.append("画像タスクには開始画像を指定してください")
+        if request.last_image_path and not request.image_path:
+            issues.append("開始画像も指定してください")
+        for image in (request.image_path, request.last_image_path):
+            if image and not Path(image).is_file():
+                issues.append("画像が見つかりません")
         runtime, python = runtime_paths(self.root)
         graph = build_graph(request.prompt, request.seed, request.width or 512,
-                            request.height or 512, request.frames, self.keep, self.tile_batch)
+                            request.height or 512, request.frames, self.keep, self.tile_batch, bool(request.image_path), bool(request.last_image_path))
         command = (str(python), "-m", "hayate.backends.minimax_h3.comfy_worker",
                    "--runtime", str(runtime), "--output", str(request.output),
                    "--graph", json.dumps(graph, ensure_ascii=True))
+        for flag, image in (("--first-image", request.image_path), ("--last-image", request.last_image_path)):
+            if image:
+                command += (flag, str(image))
         return GenerationPlan(request, command, {"PYTHONPATH": str(self.root)}, None,
                               tuple(issues), ("FastH3 T2VA実験経路。画質・速度はGPU上で要比較",),
                               working_directory=self.root, backend="comfy_fasth3")
