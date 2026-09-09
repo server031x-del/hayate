@@ -525,14 +525,12 @@ def create_app(
 
     @app.post("/api/models/setup/prepare")
     async def prepare_model_setup(request: Request):
-        ensure_local_secret_action(request)
         return await asyncio.to_thread(model_setup.prepare)
 
     @app.post("/api/models/setup/apply-standard")
     async def apply_standard_model_paths(request: Request):
         """Explicitly point the model-related settings at HAYATE's folders."""
 
-        ensure_local_secret_action(request)
         defaults = WebUISettings.defaults(root).to_dict()
         current_values = settings_store.load().to_dict()
         for key in (
@@ -556,7 +554,6 @@ def create_app(
 
     @app.post("/api/models/setup/download", status_code=202)
     async def download_model(payload: ModelDownloadPayload, request: Request):
-        ensure_local_secret_action(request)
         try:
             return await asyncio.to_thread(
                 model_setup.start_download,

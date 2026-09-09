@@ -649,3 +649,17 @@ def test_shutdown_before_popen_never_launches_child(tmp_path, monkeypatch):
         assert not output.exists()
     finally:
         manager.shutdown()
+
+def test_remote_model_setup_does_not_require_openai_secret_access(tmp_path):
+    service = SimpleNamespace(
+        prepare=lambda: {"ready": True},
+        start_download=lambda asset_id, license_accepted: {"id": asset_id},
+    )
+    app = create_app(tmp_path, trusted_hosts=["*"], model_setup_service=service)
+    with TestClient(app) as client:
+        headers = {"X-HAYATE-UI": "1"}
+        assert client.post('/api/models/setup/prepare', json={}, headers=headers).status_code == 200
+        assert client.post('/api/models/setup/apply-standard', json={}, headers=headers).status_code == 200
+        assert client.post('/api/models/setup/download', json={"asset_id": "transformer_w4a8", "license_accepted": True}, headers=headers).status_code == 202
+        assert client.post('/api/prompt-assistant', json={"brief": "test", "task": "t2va"}, headers=headers).status_code == 403
+        assert client.post('/api/models/setup/prepare', json={}).status_code == 403
