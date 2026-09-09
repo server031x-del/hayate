@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260908-fasth3-v1">
+  <link rel="stylesheet" href="/assets/app.css?v=20260909-model-availability-v1">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -75,6 +75,7 @@
               <div><span class="step-number">01</span><h2>生成プロファイル</h2></div>
               <p>品質と速度のバランスを選択</p>
             </div>
+            <p class="model-availability-note" id="profileAvailabilityNote" hidden aria-live="polite"></p>
             <div class="profile-grid" id="profileGrid">
               <label class="profile-card">
                 <input type="radio" name="profile" value="fast_sage">
@@ -197,6 +198,7 @@
             <details class="advanced" id="advancedSettings">
               <summary><span>詳細設定</span><small>Sampler・EasyCache・メモリ</small><i></i></summary>
               <div class="advanced-body">
+                <p class="model-availability-note" id="advancedAvailabilityNote" hidden aria-live="polite"></p>
                 <div class="setting-grid">
                   <label><span>タスク</span><select id="task"><option value="auto">Auto</option><option value="t2va">T2V + Audio</option><option value="fl2va">I2V / FL2V</option><option value="ref2va">Reference</option></select></label>
                   <label><span>Seed</span><div class="input-with-button"><input id="seed" type="number" min="0" max="2147483647" value="20260825"><button type="button" id="randomSeed" title="ランダム">↻</button></div></label>
@@ -388,7 +390,7 @@
   </dialog>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <!-- Legacy cache key retained in this marker for clients that fingerprint the previous build. -->
-  <!-- app.js?v=20260827-model-setup -->
-  <script src="/assets/app.js?v=20260908-fasth3-v1" defer></script>
+  <!-- app.js?v=20260909-model-availability-v1 -->
+  <script src="/assets/app.js?v=20260909-model-availability-v1" defer></script>
 </body>
 </html>

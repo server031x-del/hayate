@@ -143,7 +143,13 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .fasth3-profile em { background: var(--amber); }
 .profile-card b { display: block; font-size: 10px; white-space: nowrap; }
 .profile-card small { display: block; color: var(--quiet); font-size: 8px; margin-top: 4px; white-space: nowrap; }
+.profile-card .profile-lock-note { grid-column: 2; color: var(--amber); font-size: 9px; line-height: 1.3; margin-top: -2px; white-space: normal; }
+.profile-card.unavailable { border-style: dashed; }
 .profile-card em { position: absolute; top: 0; right: 0; padding: 3px 7px; border-radius: 0 12px 0 8px; color: #061018; background: var(--cyan); font-size: 7px; font-style: normal; font-weight: 800; letter-spacing: .08em; }
+
+.model-availability-note { margin: 10px 0 0; padding: 9px 11px; border: 1px solid rgba(84,230,255,.24); border-radius: 9px; color: var(--muted); background: rgba(84,230,255,.05); font-size: 10px; line-height: 1.45; }
+.model-availability-note.ready { border-color: rgba(73,220,157,.3); color: var(--green); background: rgba(73,220,157,.06); }
+.model-availability-note.blocked { border-color: rgba(255,177,66,.34); color: var(--amber); background: rgba(255,177,66,.07); }
 
 .prompt-box { border: 1px solid var(--line); border-radius: 14px; background: rgba(5,9,15,.52); overflow: hidden; transition: border .2s; }
 .prompt-box:focus-within { border-color: rgba(84,230,255,.35); box-shadow: 0 0 0 3px rgba(84,230,255,.035); }
@@ -197,6 +203,9 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .advanced-body { border-top: 1px solid var(--line); padding: 15px; }
 .setting-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .setting-grid label > span { display: block; color: var(--muted); font-size: 8px; margin-bottom: 6px; }
+.setting-grid label.availability-disabled, .easycache-box.availability-disabled { opacity: .52; }
+.setting-grid select:disabled, .setting-grid input:disabled, .switch:has(input:disabled) { cursor: not-allowed; opacity: .62; }
+.setting-grid label:has(select:disabled), .setting-grid label:has(input:disabled) { cursor: not-allowed; }
 .input-with-button { position: relative; }
 .input-with-button button { position: absolute; top: 4px; right: 4px; width: 27px; height: 27px; border: 0; border-radius: 7px; background: var(--surface-3); cursor: pointer; }
 .toggle-field { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 9px; padding: 0 9px; min-height: 35px; align-self: end; }

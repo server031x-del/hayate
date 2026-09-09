@@ -15,6 +15,7 @@ const state = {
   promptTransform: null,
   promptAI: null,
   modelSetup: null,
+  fastH3Status: null,
   modelTimer: null,
   dialogJobId: null,
   deleteJobId: null,
@@ -158,10 +159,22 @@ function navigate(view) {
 }
 
 function selectedProfile() {
-  return $('input[name="profile"]:checked')?.value || "fast_sage_detail";
+  const checked = $('input[name="profile"]:checked');
+  if (checked && !checked.disabled) return checked.value;
+  const fallback = $$('input[name="profile"]').find((radio) => !radio.disabled);
+  return fallback?.value || checked?.value || "fast_sage_detail";
 }
 
 function applyProfile(profile) {
+  const radio = $(`input[name="profile"][value="${profile}"]`);
+  if (radio?.disabled) {
+    const fallback = $$('input[name="profile"]').find((item) => !item.disabled);
+    if (fallback && fallback.value !== profile) {
+      fallback.checked = true;
+      $$(".profile-card").forEach((card) => card.classList.toggle("selected", card.contains(fallback)));
+      return applyProfile(fallback.value);
+    }
+  }
   const preset = state.bootstrap?.profiles?.[profile];
   if (profile === "fasth3" || profile === "fasth3_fast") {
     // The preview is T2VA-only.  Keep the task selector aligned with the
@@ -290,6 +303,14 @@ function generationPayload() {
   };
 }
 
+function profileCanGenerate(profile = selectedProfile()) {
+  const capabilities = modelCapabilities();
+  if (profile === "fasth3" || profile === "fasth3_fast") {
+    return profile === "fasth3_fast" ? capabilities.fastH3FastReady : capabilities.fastH3Ready;
+  }
+  return capabilities.known && capabilities.coreReady;
+}
+
 function structuredPromptDraft() {
   const visual = $("#promptVisual").value.trim();
   const sound = $("#promptSound").value.trim();
@@ -402,6 +423,9 @@ async function submitGeneration(event) {
   const button = $("#generateButton");
   const payload = generationPayload();
   if (!payload.prompt) return toast("プロンプトを入力してください", "error");
+  if (!profileCanGenerate(payload.profile)) {
+    return toast("選択した構成のモデルが未取得または未検証です。設定画面でモデル状態を確認してください", "error");
+  }
   button.disabled = true;
   button.querySelector("span:nth-of-type(2)").textContent = "プリフライト中…";
   try {
@@ -749,6 +773,160 @@ function modelAssetStatusLabel(asset, status) {
 }
 
 const STANDARD_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32", "checkpoint_support"];
+const PDD_MODEL_IDS = ["pdd_fl2va_8step", "pdd_adaln_affine"];
+const MODEL_ASSET_SHORT_LABELS = {
+  transformer_w4a8: "DiT",
+  text_encoder_nvfp4_awq: "TEXT",
+  video_vae_int8_convrot: "VIDEO VAE",
+  audio_vae_fp32: "AUDIO VAE",
+  checkpoint_support: "support files",
+  pdd_fl2va_8step: "PDD LoRA",
+  pdd_adaln_affine: "AdaLN",
+};
+
+function modelCapabilities() {
+  const assets = Array.isArray(state.modelSetup?.assets) ? state.modelSetup.assets : [];
+  const known = assets.length > 0;
+  const byId = new Map(assets.map((asset) => [asset.id, asset]));
+  const isReady = (id) => {
+    const asset = byId.get(id);
+    return Boolean(asset && asset.execution_supported !== false && modelAssetStatus(asset) === "ready");
+  };
+  const missing = (ids) => ids.filter((id) => !isReady(id));
+  const coreMissing = missing(STANDARD_MODEL_IDS);
+  const pddMissing = missing(PDD_MODEL_IDS);
+  return {
+    known,
+    coreReady: known && coreMissing.length === 0,
+    pddReady: known && coreMissing.length === 0 && pddMissing.length === 0,
+    coreMissing,
+    pddMissing,
+    fastH3Ready: state.fastH3Status?.ready === true,
+    fastH3FastReady: state.fastH3Status?.fast_profile_ready === true,
+  };
+}
+
+function modelMissingLabel(ids) {
+  return ids.map((id) => MODEL_ASSET_SHORT_LABELS[id] || id).join("、");
+}
+
+function setProfileAvailability(profile, enabled, reason = "") {
+  const radio = $(`input[name="profile"][value="${profile}"]`);
+  if (!radio) return;
+  const card = radio.closest(".profile-card");
+  radio.disabled = !enabled;
+  card?.classList.toggle("unavailable", !enabled);
+  card?.setAttribute("aria-disabled", String(!enabled));
+  if (card) {
+    let note = $(".profile-lock-note", card);
+    if (!note) {
+      note = document.createElement("small");
+      note.className = "profile-lock-note";
+      card.append(note);
+    }
+    note.textContent = reason;
+    note.hidden = enabled || !reason;
+    if (enabled) card.removeAttribute("title");
+    else if (reason) card.title = reason;
+  }
+}
+
+function setControlAvailability(control, enabled, reason = "") {
+  if (!control) return;
+  control.disabled = !enabled;
+  control.setAttribute("aria-disabled", String(!enabled));
+  const wrapper = control.closest("label") || control.closest(".easycache-box");
+  wrapper?.classList.toggle("availability-disabled", !enabled);
+  if (enabled) control.removeAttribute("title");
+  else if (reason) control.title = reason;
+}
+
+function updateModelAvailability() {
+  const capabilities = modelCapabilities();
+  const profileNote = $("#profileAvailabilityNote");
+  const advancedNote = $("#advancedAvailabilityNote");
+  const standardReason = capabilities.known
+    ? `標準H3の未取得または未検証: ${modelMissingLabel(capabilities.coreMissing)}`
+    : "モデル取得状況を確認中です";
+  const pddReason = capabilities.known
+    ? `PDD追加モデルの未取得または未検証: ${modelMissingLabel(capabilities.pddMissing)}`
+    : "モデル取得状況を確認中です";
+
+  const standardEnabled = !capabilities.known || capabilities.coreReady;
+  ["fast_sage", "fast_sage_detail", "fast", "quality", "custom"].forEach((profile) => {
+    setProfileAvailability(profile, standardEnabled, standardEnabled ? "" : standardReason);
+  });
+  setProfileAvailability("pdd", !capabilities.known || capabilities.pddReady, capabilities.pddReady ? "" : pddReason);
+  setProfileAvailability(
+    "fasth3",
+    capabilities.fastH3Ready,
+    capabilities.fastH3Ready ? "" : (state.fastH3Status ? "FastH3の利用条件を満たしていません" : "FastH3の利用条件を診断してください"),
+  );
+  setProfileAvailability(
+    "fasth3_fast",
+    capabilities.fastH3FastReady,
+    capabilities.fastH3FastReady ? "" : "Blackwell向けFastH3の利用条件を満たしていません",
+  );
+  const fastProfile = $('input[name="profile"][value="fasth3_fast"]');
+  fastProfile?.closest(".profile-card")?.toggleAttribute("hidden", !capabilities.fastH3FastReady);
+
+  if (profileNote) {
+    if (!capabilities.known) {
+      profileNote.hidden = true;
+    } else {
+      profileNote.hidden = false;
+      profileNote.className = `model-availability-note ${capabilities.coreReady ? "ready" : "blocked"}`;
+      profileNote.textContent = capabilities.coreReady
+        ? (capabilities.pddReady
+          ? "標準H3とPDD 8-Stepの必要モデルを検証済みです。"
+          : "標準H3の必要モデルを検証済みです。PDD 8-Stepは追加モデル取得後に有効になります。")
+        : `標準H3プロファイルは無効です。${standardReason}`;
+    }
+  }
+
+  // Sampler, task, memory and cache controls depend on the standard H3
+  // checkpoint. Seed, prompt cache and GPU selection remain usable because
+  // they are independent of a particular model package.
+  const dependentEnabled = !capabilities.known || capabilities.coreReady;
+  const dependentReason = capabilities.coreReady ? "" : standardReason;
+  ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
+    setControlAvailability($(`#${id}`), dependentEnabled, dependentReason);
+  });
+  const task = $("#task");
+  setControlAvailability(task, dependentEnabled, dependentReason);
+  $$("#task option").forEach((option) => {
+    option.disabled = !dependentEnabled;
+    option.title = dependentEnabled ? "" : dependentReason;
+  });
+  if (dependentEnabled && task?.value && $("#task option:checked")?.disabled) task.value = "auto";
+
+  const pddEnabled = !capabilities.known || capabilities.pddReady;
+  setControlAvailability($("#pdd"), pddEnabled, pddEnabled ? "" : pddReason);
+  if (!pddEnabled && $("#pdd").checked) $("#pdd").checked = false;
+  if (advancedNote) {
+    if (!capabilities.known || capabilities.coreReady) {
+      advancedNote.hidden = true;
+    } else {
+      advancedNote.hidden = false;
+      advancedNote.className = "model-availability-note blocked";
+      advancedNote.textContent = `モデル依存の詳細設定を無効化しています。${standardReason}`;
+    }
+  }
+
+  const checked = $('input[name="profile"]:checked');
+  if (!checked || checked.disabled) {
+    const fallback = ["fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
+      .map((profile) => $(`input[name="profile"][value="${profile}"]`))
+      .find((radio) => radio && !radio.disabled);
+    if (fallback) {
+      fallback.checked = true;
+      $$(".profile-card").forEach((card) => card.classList.toggle("selected", card.contains(fallback)));
+      applyProfile(fallback.value);
+    }
+  }
+  updateProfileSummary();
+}
+
 function configurationAssets(assets) {
   const choice = $("#modelConfiguration").value;
   if (choice === "all") return assets;
@@ -773,6 +951,7 @@ async function downloadConfiguration() {
 
 function renderModelSetup(payload) {
   state.modelSetup = payload || {};
+  updateModelAvailability();
   const allAssets = payload?.assets || payload?.models || [];
   const assets = configurationAssets(allAssets);
   const choice = $("#modelConfiguration").value;
@@ -835,6 +1014,7 @@ function renderModelSetup(payload) {
 }
 
 function renderFastH3Status(payload) {
+  state.fastH3Status = payload || null;
   const element = $("#fastH3Status");
   if (!element) return;
   if (!payload) {
@@ -872,31 +1052,13 @@ function renderFastH3Status(payload) {
   if (warnings.length) lines.push(...warnings.map((item) => `・注意: ${item}`));
   element.className = `fasth3-status ${payload.ready ? "ready" : "blocked"}`;
   element.textContent = lines.join("\n");
-  const profile = $('input[name="profile"][value="fasth3"]');
-  if (profile) {
-    profile.disabled = !payload.ready;
-    if (!payload.ready && profile.checked) {
-      const fallback = $('input[name="profile"][value="fast_sage_detail"]');
-      if (fallback) fallback.checked = true;
-      applyProfile("fast_sage_detail");
-    }
-  }
-  const fastProfile = $('input[name="profile"][value="fasth3_fast"]');
-  if (fastProfile) {
-    fastProfile.disabled = payload.fast_profile_ready !== true;
-    fastProfile.closest(".profile-card").hidden = fastProfile.disabled;
-    if (fastProfile.disabled && fastProfile.checked) {
-      const fallback = $('input[name="profile"][value="fast_sage_detail"]');
-      if (fallback) fallback.checked = true;
-      applyProfile("fast_sage_detail");
-    }
-  }
   if (Array.isArray(payload.fast_profile_issues) && payload.fast_profile_issues.length) {
     lines.push(...payload.fast_profile_issues.map((item) => `・Blackwell最速条件: ${item}`));
   } else if (payload.fast_profile_ready === true) {
     lines.push("Blackwell最速プロファイル: 利用可能（sm100a VSA + FA4 + regional compile）");
   }
   element.textContent = lines.join("\n");
+  updateModelAvailability();
 }
 
 async function checkFastH3() {
