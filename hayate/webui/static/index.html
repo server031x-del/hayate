@@ -203,13 +203,13 @@
                 <label class="profile-card large-gpu-profile" hidden>
                   <input type="radio" name="profile" value="a100_detail" disabled>
                   <span class="profile-icon detail">A</span>
-                  <span class="profile-text"><b>A100 高速・高画質</b><small>全常駐 · INT8 Tensor Core · 20ステップ</small></span>
+                  <span class="profile-text"><b>A100 高速・高画質</b><small>DiT常駐 · TEXTストリーミング · INT8 Tensor Core · 20ステップ</small></span>
                   <em>A100推奨</em>
                 </label>
                 <label class="profile-card large-gpu-profile" hidden>
                   <input type="radio" name="profile" value="a100_quality" disabled>
                   <span class="profile-icon quality">AQ</span>
-                  <span class="profile-text"><b>A100 品質基準</b><small>全常駐 · 50ステップ · SDPA · 比較の基準</small></span>
+                  <span class="profile-text"><b>A100 品質基準</b><small>DiT常駐 · TEXTストリーミング · 50ステップ · SDPA · 比較の基準</small></span>
                   <em class="muted">基準</em>
                 </label>
                 <label class="profile-card">
@@ -247,7 +247,7 @@
                   <label class="profile-card large-gpu-profile" hidden>
                     <input type="radio" name="profile" value="a100_pdd" disabled>
                     <span class="profile-icon pdd">A8</span>
-                    <span class="profile-text"><b>A100 PDD 8-Step</b><small>全常駐 · 蒸留8回評価 · SDPA</small></span>
+                    <span class="profile-text"><b>A100 PDD 8-Step</b><small>DiT常駐 · TEXTストリーミング · 蒸留8回評価 · SDPA</small></span>
                     <em class="muted">比較用</em>
                   </label>
                   <label class="profile-card">
@@ -430,7 +430,7 @@
                 <div class="model-config-row">
                   <label class="model-config-picker"><span>おすすめの構成</span>
                     <select id="modelConfiguration">
-                      <option value="a100">A100（40/80GB）：INT8 DiT＋INT8 TEXT · 全常駐</option>
+                      <option value="a100">A100（40/80GB）：INT8 DiT常駐＋TEXTストリーミング</option>
                       <option value="comfy">FastH3：高速4-Step · INT8＋共有VAE</option>
                       <option value="fl2va">画像向け：FL2VA · W4A8＋共有VAE</option>
                       <option value="standard">おすすめ：品質・速度バランス（通常H3 W4A8）</option>

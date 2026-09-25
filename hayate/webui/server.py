@@ -791,11 +791,6 @@ def create_app(
     @app.post("/api/jobs", status_code=202)
     async def create_job(payload: GenerationPayload):
         current = settings_store.load()
-        if payload.profile in {"a100_detail", "a100_quality", "a100_pdd"} and Path(current.config_path).name != "models.a100.yaml":
-            raise HTTPException(422, {
-                "message": "generation preflight failed",
-                "issues": ["A100プロファイルには設定画面でA100構成を取得し、「標準パスを適用」してください"],
-            })
         output_dir = Path(current.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         token = os.urandom(4).hex()
@@ -844,6 +839,11 @@ def create_app(
                 raise HTTPException(
                     422, {"message": "generation preflight failed", "issues": [issue]}
                 )
+        if payload.profile in {"a100_detail", "a100_quality", "a100_pdd"} and Path(current.config_path).name != "models.a100.yaml":
+            raise HTTPException(422, {
+                "message": "generation preflight failed",
+                "issues": ["A100プロファイルには設定画面でA100構成を取得し、「A100構成を適用」を押してください"],
+            })
         try:
             if payload.profile in {"comfy_fasth3", "comfy_fl2va"}:
                 assets = (await asyncio.to_thread(model_setup.status))["assets"]

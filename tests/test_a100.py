@@ -76,12 +76,12 @@ def _plan(tmp_path: Path, **request_fields):
     return backend.plan(request)
 
 
-def test_a100_profiles_keep_every_stage_resident():
+def test_a100_profiles_keep_dit_resident_and_stream_conditioner():
     for name in ("a100_detail", "a100_quality", "a100_pdd"):
         profile = get_generation_profile(name)
         assert profile.blocks_to_swap == 0
-        assert profile.text_encoder_gpu_layers == -1
-        assert profile.text_encoder_stream is False
+        assert profile.text_encoder_gpu_layers == 0
+        assert profile.text_encoder_stream is True
         assert profile.min_vram_gib == LARGE_GPU_MIN_VRAM_GIB
         assert profile.vae_tile_size == 256  # validated tile; 512 ghosted
     detail = get_generation_profile("a100_detail")

@@ -34,9 +34,10 @@ class GenerationProfile:
         return asdict(self)
 
 
-# Profiles for a single 40/80 GB datacenter adapter (A100 class, SM80).  Every
-# stage is resident: no DiT block swap and no conditioner streaming.  They keep
-# the RTX 3060-validated cache/tile settings so only placement changes.
+# Profiles for a single 40/80 GB datacenter adapter (A100 class, SM80).  DiT
+# stays resident with no block swap; the 32B conditioner streams on demand so
+# the same profile fits the 40 GB card after the real CUDA/non-PyTorch overhead
+# is included.  The stream can be disabled manually on an 80 GB card.
 LARGE_GPU_MIN_VRAM_GIB = 38
 
 GENERATION_PROFILES = {
@@ -135,8 +136,8 @@ GENERATION_PROFILES = {
         approximate=True,
     ),
     # Recommended A100 operating point: the validated Fast Sage Detail
-    # schedule (20 points, EasyCache 0.4 ending at 85%) with everything
-    # resident and INT8 tensor-core GEMMs for an INT8 ConvRot DiT.
+    # schedule (20 points, EasyCache 0.4 ending at 85%) with a resident DiT,
+    # streamed conditioner, and INT8 tensor-core GEMMs.
     "a100_detail": GenerationProfile(
         "a100_detail",
         "A100 高速・高画質",
@@ -149,8 +150,8 @@ GENERATION_PROFILES = {
         2,
         blocks_to_swap=0,
         approximate=True,
-        text_encoder_gpu_layers=-1,
-        text_encoder_stream=False,
+        text_encoder_gpu_layers=0,
+        text_encoder_stream=True,
         int8_fast=True,
         min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
     ),
@@ -167,8 +168,8 @@ GENERATION_PROFILES = {
         0.95,
         2,
         blocks_to_swap=0,
-        text_encoder_gpu_layers=-1,
-        text_encoder_stream=False,
+        text_encoder_gpu_layers=0,
+        text_encoder_stream=True,
         min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
     ),
     # PDD keeps SDPA (the PDD+Sage short-clip failure) and the dequantized
@@ -186,8 +187,8 @@ GENERATION_PROFILES = {
         blocks_to_swap=0,
         approximate=True,
         pdd=True,
-        text_encoder_gpu_layers=-1,
-        text_encoder_stream=False,
+        text_encoder_gpu_layers=0,
+        text_encoder_stream=True,
         min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
     ),
 }

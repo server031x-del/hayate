@@ -2118,7 +2118,7 @@ function renderModelSetup(payload) {
       : "HAYATE標準モデルフォルダを設定に反映";
   }
   const configurationNotes = {
-    a100: `A100など40/80GB GPU向け。8-bit INT8 ConvRot DiT（PDD互換）とINT8 TEXTを全常駐で使い、DiTはINT8 Tensor Coreで計算します。${assets.length}ファイル · 合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。取得後に「A100構成を適用」を押してから、「A100 高速・高画質」または「A100 品質基準」を選択してください。80GBではTEXTをBF16（すべて表示から取得）に替えると無量子化になります。`,
+    a100: `A100など40/80GB GPU向け。8-bit INT8 ConvRot DiTをGPU常駐、32B TEXTをストリーミングして40GBに収めます。${assets.length}ファイル · 合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。取得後に「A100構成を適用」を押してから、「A100 高速・高画質」または「A100 品質基準」を選択してください。80GBではTEXTを常駐に切り替えられます。`,
     comfy: `FastH3用${assets.length}ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。TEXT・VAEは標準構成と共有します。取得後は生成画面で「FastH3 INT8」を選択してください。`,
     fl2va: `画像から生成するための${assets.length}ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。取得後は生成画面で「画像優先 FL2VA」を選択してください。`,
     standard: `迷ったらこの構成。「高速・画質優先」で使う通常H3の必要セットです。必要ファイル ${assets.length}件・合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。取得後は「標準パスを適用」を押してください。`,

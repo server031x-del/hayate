@@ -134,12 +134,12 @@ assert.equal(checked.value, 'a100_detail', 'Large GPUs fall back to the A100 pro
 run(`state.bootstrap.profiles = {a100_detail: ${JSON.stringify({
   steps: 20, attention_backend: 'sageattn', easycache: true, pdd: false, easycache_threshold: 0.4,
   easycache_start: 0.15, easycache_end: 0.85, easycache_max_consecutive_skips: 2, blocks_to_swap: 0,
-  activation_chunk_rows: 32768, vae_tile_size: 256, text_encoder_gpu_layers: -1, int8_fast: true,
+  activation_chunk_rows: 32768, vae_tile_size: 256, text_encoder_gpu_layers: 0, text_encoder_stream: true, int8_fast: true,
 })}}; applyProfile("a100_detail")`);
 assert.equal(elements.get('#blocksSwap').value, 0);
-assert.equal(elements.get('#textEncoderResident').checked, true, 'Preset keeps the conditioner resident');
+assert.equal(elements.get('#textEncoderResident').checked, false, 'A100 preset streams the conditioner on 40 GB cards');
 assert.equal(elements.get('#int8Fast').checked, true, 'Preset enables INT8 tensor cores');
-assert.equal(run('generationPayload().text_encoder_gpu_layers'), -1);
-assert.equal(run('generationPayload().text_encoder_stream'), false);
+assert.equal(run('generationPayload().text_encoder_gpu_layers'), 0);
+assert.equal(run('generationPayload().text_encoder_stream'), true);
 assert.equal(run('generationPayload().int8_fast'), true);
-console.log('A100 large-GPU profile gating and resident payload passed');
+console.log('A100 large-GPU profile gating and streamed conditioner payload passed');
