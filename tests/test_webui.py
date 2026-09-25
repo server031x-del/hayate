@@ -152,6 +152,9 @@ def test_webui_static_shell_and_mutation_security(tmp_path):
         assert asset.status_code == 200
         assert asset.headers["cache-control"] == "no-store"
 
+        network = client.get("/api/bootstrap").json()["network"]
+        assert network == {"exposed": False, "trusted_client_networks": []}
+
         settings = client.get("/api/settings").json()["settings"]
         assert client.put("/api/settings", json=settings).status_code == 403
         saved = client.put(
@@ -653,7 +656,7 @@ def test_shutdown_before_popen_never_launches_child(tmp_path, monkeypatch):
 def test_remote_model_setup_does_not_require_openai_secret_access(tmp_path):
     service = SimpleNamespace(
         prepare=lambda: {"ready": True},
-        start_download=lambda asset_id, license_accepted: {"id": asset_id},
+        start_download=lambda asset_id, license_accepted, source_urls=None: {"id": asset_id},
     )
     app = create_app(tmp_path, trusted_hosts=["*"], model_setup_service=service)
     with TestClient(app) as client:
@@ -663,3 +666,23 @@ def test_remote_model_setup_does_not_require_openai_secret_access(tmp_path):
         assert client.post('/api/models/setup/download', json={"asset_id": "transformer_w4a8", "license_accepted": True}, headers=headers).status_code == 202
         assert client.post('/api/prompt-assistant', json={"brief": "test", "task": "t2va"}, headers=headers).status_code == 403
         assert client.post('/api/models/setup/prepare', json={}).status_code == 403
+
+
+def test_webui_controller_harness():
+    """Run the DOM-free controller checks in tests/webui_availability.cjs."""
+
+    import shutil
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [node, str(root / "tests" / "webui_availability.cjs")],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout

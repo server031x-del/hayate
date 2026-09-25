@@ -498,6 +498,12 @@ def create_app(
             "openai": openai_settings_store.public_dict(),
             "hardware": hardware,
             "jobs": [with_media_availability(job) for job in store.list(100)],
+            "network": {
+                "exposed": bool(app.state.network_exposed),
+                "trusted_client_networks": [
+                    str(network) for network in app.state.trusted_client_networks
+                ],
+            },
             "profiles": {
                 name: get_generation_profile(name).to_dict()
                 for name in PROFILE_NAMES

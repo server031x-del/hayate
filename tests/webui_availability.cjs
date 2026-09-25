@@ -54,7 +54,7 @@ run('applyProfile("comfy_fasth3"); updateModelAvailability()');
 assert(elements.get('#steps').disabled);
 assert(!elements.get('#vsaKeep').disabled);
 assert(!elements.get('#comfyOptions').hidden);
-assert.equal(elements.get('#task').value, 't2va');
+assert.equal(elements.get('#task').value, 'auto', 'FastH3 INT8 infers the task from the attached images');
 checked = radios.find(r => r.value === 'fast');
 run('applyProfile("fast"); updateModelAvailability()');
 assert(!elements.get('#steps').disabled, 'Switching back restores standard controls');
@@ -75,3 +75,34 @@ assert.deepEqual(JSON.parse(JSON.stringify(run('modelSourceUrls("test_asset")'))
   'model.safetensors': 'https://huggingface.co/new/repo/resolve/main/file.safetensors',
 });
 console.log('Composer payload and empty initial prompt passed');
+
+// Random seed mode lets the server draw a seed; a fixed seed is sent as-is.
+elements.get('#seed').value = '1234';
+assert.equal(run('generationPayload().seed'), 1234);
+elements.get('#seedRandom').checked = true;
+assert.equal(run('generationPayload().seed'), null, 'Random seed mode sends null');
+elements.get('#seedRandom').checked = false;
+
+// An explicit profile choice is restored once its models become available again.
+run('state.modelSetup = {assets: STANDARD_MODEL_IDS.map(id => ({id,status:"verified"}))}; state.preferredProfile = "quality"; updateModelAvailability()');
+assert.equal(checked.value, 'quality', 'Preferred profile is re-selected when enabled');
+run('state.preferredProfile = null');
+
+// Library/queue show the visual description instead of H3 field scaffolding.
+assert.equal(
+  run('displayPrompt("integrated_multimodal_description: [Shot 1, 0-5s] A red car drives.\\n\\noverall_soundscape: engine\\n\\nnon_diegetic_music: N/A")'),
+  'A red car drives.',
+);
+assert.equal(run('displayPrompt("plain prompt")'), 'plain prompt');
+
+// Client-side validation mirrors the server contract.
+assert.match(run('validatePayload({prompt:"x", width:500, height:512, duration_seconds:5, seed:1})'), /32の倍数/);
+assert.equal(run('validatePayload({prompt:"x", width:512, height:512, duration_seconds:5, seed:null})'), '');
+assert.match(run('validatePayload({prompt:"x", width:512, height:512, duration_seconds:5, seed:1, last_image_asset_id:"a"})'), /開始画像/);
+
+// Preflight issues and pydantic errors are surfaced instead of dropped.
+const preflight = run('errorMessage({detail:{message:"generation preflight failed", issues:["missing DiT"]}}, 422)');
+assert.match(preflight, /生成前チェック/);
+assert.match(preflight, /missing DiT/);
+assert.match(run('errorMessage({detail:[{loc:["body","width"], msg:"must be a multiple of 32"}]}, 422)'), /幅: must be a multiple of 32/);
+console.log('Seed mode, preferred profile, prompt display, validation and error formatting passed');
