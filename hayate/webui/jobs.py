@@ -33,6 +33,7 @@ from hayate.runtime.gpu_devices import (
     resolve_gpu_selector,
 )
 from hayate.runtime.gpu_lease import GPULease
+from hayate.webui.comfy_pool import WarmComfyPool
 
 BLACKWELL_FASTVIDEO_CAPABILITIES = frozenset({"10.0", "10.3"})
 FAST_PROFILE_MIN_VRAM_BYTES = 80 * 1024**3
@@ -342,6 +343,8 @@ class JobManager:
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._plans: dict[str, GenerationPlan] = {}
         self._active: dict[str, subprocess.Popen[str]] = {}
+        self._comfy_pool = WarmComfyPool()
+        self._comfy_jobs: dict[str, str] = {}
         self.worker_count = max(1, min(8, int(worker_count)))
         self._gpu_discovery = gpu_discovery
         self._lock = threading.RLock()
@@ -408,6 +411,7 @@ class JobManager:
                 return job
             process_active = status in {"running", "stopping"}
             process = self._active.get(job_id)
+            comfy_gpu = self._comfy_jobs.get(job_id)
             if process_active and process is not None and process.poll() is not None:
                 return job
             changed = self.store.transition(
@@ -421,6 +425,10 @@ class JobManager:
             if not changed:
                 return self.store.get(job_id) or job
         if process is not None:
+            # A cancelled bridge may no longer be able to interrupt ComfyUI.
+            # Stop its owned server before the GPU lease can be reassigned.
+            if comfy_gpu is not None:
+                self._comfy_pool.discard(comfy_gpu)
             self._terminate_owned_tree(process)
         return self.store.get(job_id) or job
 
@@ -639,6 +647,12 @@ class JobManager:
                         # runtime namespace.  Probe it before committing to
                         # an expensive Python/torch launch; otherwise the new
                         # child would fail only after importing H3.
+                        warm_gpu = gpu_id if (
+                            plan.backend == "comfy_fasth3"
+                            and environment.get("HAYATE_COMFY_KEEP_WARM", "1") != "0"
+                        ) else None
+                        if warm_gpu != gpu_id and self._comfy_pool.has_live(gpu_id):
+                            self._comfy_pool.discard(gpu_id)
                         runtime_probe = GPULease(
                             gpu_id=gpu_id,
                             namespace="runtime",
@@ -648,10 +662,11 @@ class JobManager:
                                 "job_id": job_id,
                             },
                         )
-                        if not runtime_probe.acquire():
-                            lease.release()
-                            continue
-                        runtime_probe.release()
+                        if not (warm_gpu == gpu_id and self._comfy_pool.has_live(gpu_id)):
+                            if not runtime_probe.acquire():
+                                lease.release()
+                                continue
+                            runtime_probe.release()
                         # UUID masking prevents physical nvidia-smi indices
                         # from being confused with PyTorch's visible ordinals.
                         environment["CUDA_VISIBLE_DEVICES"] = device.visible_id
@@ -680,6 +695,10 @@ class JobManager:
         log_path, _ = generation_artifact_paths(output)
         environment = os.environ.copy()
         environment.update(plan.environment)
+        for key in ("HAYATE_COMFY_BASE_URL", "HAYATE_COMFY_INPUT_DIR",
+                    "HAYATE_COMFY_OUTPUT_DIR", "HAYATE_COMFY_SERVER_LOG",
+                    "HAYATE_COMFY_REUSED"):
+            environment.pop(key, None)
         # The OpenAI prompt-authoring credential belongs to the WebUI process
         # only.  Never inherit it into the separate MiniMax H3 generation
         # process, whose logs and third-party runtime are unrelated to AI
@@ -746,8 +765,18 @@ class JobManager:
                     assigned_at=_utc_now(),
                 )
             started = time.perf_counter()
+            if plan.backend == "comfy_fasth3" and assigned_device is not None and environment.get("HAYATE_COMFY_KEEP_WARM", "1") != "0":
+                self.store.update(job_id, stage="起動準備", detail="ComfyUI FastH3を準備しています")
+                command = plan.command
+                runtime = Path(command[command.index("--runtime") + 1])
+                root = Path(plan.working_directory or Path.cwd())
+                environment.update(self._comfy_pool.ensure(
+                    assigned_device.identity, runtime, command[0], root, environment,
+                ))
             with self._lock:
                 if self._stop.is_set():
+                    if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
+                        self._comfy_pool.discard(assigned_device.identity)
                     self.store.transition(
                         job_id,
                         {"queued"},
@@ -759,6 +788,8 @@ class JobManager:
                     self._plans.pop(job_id, None)
                     return
                 if (self.store.get(job_id) or {}).get("status") != "queued":
+                    if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
+                        self._comfy_pool.discard(assigned_device.identity)
                     self._plans.pop(job_id, None)
                     return
                 # FastVideo's WSL bridge serializes its allow-listed
@@ -788,6 +819,8 @@ class JobManager:
                     creationflags=creationflags,
                 )
                 self._active[job_id] = process
+                if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
+                    self._comfy_jobs[job_id] = assigned_device.identity
                 running = self.store.transition(
                     job_id,
                     {"queued"},
@@ -800,8 +833,11 @@ class JobManager:
                 )
                 if not running:
                     self._active.pop(job_id, None)
+                    self._comfy_jobs.pop(job_id, None)
                     self._plans.pop(job_id, None)
                     self._terminate_owned_tree(process)
+                    if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
+                        self._comfy_pool.discard(assigned_device.identity)
                     return
             with log_path.open("w", encoding="utf-8") as log:
                 assert process.stdout is not None
@@ -820,9 +856,11 @@ class JobManager:
                             changes["runtime_metrics"] = update.runtime_metrics
                         self.store.update(job_id, **changes)
             returncode = process.wait()
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError, RuntimeError, TimeoutError, ValueError) as exc:
             error = str(exc)
         finally:
+            if process is not None and process.poll() not in (None, 0) and assigned_device is not None and plan.backend == "comfy_fasth3":
+                self._comfy_pool.discard(assigned_device.identity)
             if lease is not None:
                 lease.release()
 
@@ -883,6 +921,7 @@ class JobManager:
                     pid=None,
                 )
             self._active.pop(job_id, None)
+            self._comfy_jobs.pop(job_id, None)
             self._plans.pop(job_id, None)
         write_generation_manifest(
             plan,
@@ -915,3 +954,4 @@ class JobManager:
             self._queue.put(None)
         for worker in self._workers:
             worker.join(timeout=8)
+        self._comfy_pool.close()

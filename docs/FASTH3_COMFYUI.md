@@ -31,10 +31,12 @@ runpy.run_path('/content/HAYATE-webui/colab/setup_comfy_fasth3.py', run_name='__
 - Chunk FeedForward: chunks=2、threshold=4096
 - Mozer Fast VAE: tile batch=2、メモリ節約用1も選択可能
 
-HAYATEが専用ComfyUIプロセスをloopback上でジョブごとに起動します。
-WebSocket進捗をHAYATEへ送り、API履歴のMP4を検証して生成一覧へ保存します。
-ジョブ終了・失敗・キャンセルで専用プロセスを終了します。途中保存は未対応です。
-プロセスを共有しないため、毎回モデル読込時間が発生します。
+WebUIはGPUごとにloopback専用のComfyUIプロセスを起動し、正常終了後も保持します。
+2回目以降は起動とモデル読込を再利用し、WebSocket進捗とAPI履歴のMP4検証は
+ジョブごとに行います。失敗・キャンセル時は当該GPUのComfyUIを停止し、
+次のジョブで新しく起動します。WebUI終了時も停止します。途中保存は未対応です。
+GPUメモリは待機中も使用します。必要なら `HAYATE_COMFY_KEEP_WARM=0` で
+従来のジョブごとの起動・終了に戻せます。
 
 画質、実GPU上の速度、1生成1円以下の達成は未検証です。記事の測定値をHAYATEの
 測定結果とは扱いません。VSAの動作ログが確認できない実行は成功扱いにしません。

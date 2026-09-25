@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 import urllib.request
 import uuid
 
@@ -48,32 +50,56 @@ def validate_nodes(info, graph):
 def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None):
     import websocket
     output.parent.mkdir(parents=True, exist_ok=True)
-    # Each job owns its server, so cancellation cannot interrupt another API client.
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    base = f"http://127.0.0.1:{port}"
+    warm_base = os.environ.get("HAYATE_COMFY_BASE_URL", "")
+    if warm_base:
+        parsed = urlsplit(warm_base)
+        if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.port is None or parsed.username or parsed.password or parsed.path not in ("", "/"):
+            raise ValueError("Warm ComfyUI must be bound to 127.0.0.1")
+        warm_base = f"http://127.0.0.1:{parsed.port}"
+    if warm_base:
+        base = warm_base
+        raw_dir = Path(os.environ["HAYATE_COMFY_OUTPUT_DIR"])
+        input_dir = Path(os.environ["HAYATE_COMFY_INPUT_DIR"])
+        server_log = Path(os.environ["HAYATE_COMFY_SERVER_LOG"])
+    else:
+        # Direct CLI runs retain a per-job owned server.
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        raw_dir = output.parent / ".comfy" / output.stem
+        input_dir = raw_dir / "input"
+        server_log = None
     def api(path, body=None):
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as response:
             return json.load(response)
-    raw_dir = output.parent / ".comfy" / output.stem
     raw_dir.mkdir(parents=True, exist_ok=True)
-    input_dir = raw_dir / "input"
     input_dir.mkdir(parents=True, exist_ok=True)
     from PIL import Image, ImageOps
-    for source, name in ((first_image, "first.png"), (last_image, "last.png")):
+    staged_inputs = []
+    for source, name, node_id in ((first_image, "first.png", "18"), (last_image, "last.png", "19")):
         if source:
+            if warm_base:
+                name = f"{uuid.uuid4().hex}_{name}"
+                graph[node_id]["inputs"]["image"] = name
             with Image.open(source) as img:
                 ImageOps.exif_transpose(img).convert("RGB").save(input_dir / name)
+            staged_inputs.append(input_dir / name)
     log_path = output.with_suffix(".comfy.log")
-    args = [sys.executable, "-u", str(runtime / "main.py"), "--listen", "127.0.0.1", "--port", str(port),
+    args = [] if warm_base else [sys.executable, "-u", str(runtime / "main.py"), "--listen", "127.0.0.1", "--port", str(port),
             "--disable-auto-launch", "--output-directory", str(raw_dir), "--input-directory", str(input_dir),
             "--extra-model-paths-config", str(runtime / "hayate-models.yaml"),
             "--enable-dynamic-vram", "--disable-pinned-memory", "--async-offload", "2"]
     process = None
     ws = None
+    log_start = server_log.stat().st_size if server_log is not None else 0
+    def new_server_log():
+        assert server_log is not None
+        with server_log.open("rb") as source:
+            source.seek(log_start)
+            return source.read().decode("utf-8", errors="replace")
     def interrupted(*_):
         raise KeyboardInterrupt("HAYATE cancelled this generation")
     signal.signal(signal.SIGTERM, interrupted)
@@ -81,23 +107,27 @@ def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None)
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, interrupted)
     try:
-        with log_path.open("w", encoding="utf-8") as log:
-            process = subprocess.Popen(args, cwd=runtime, stdout=log, stderr=subprocess.STDOUT)
-            emit("起動準備", "ComfyUI FastH3を起動しています", 1)
-            deadline = time.monotonic() + 180
-            while True:
-                if process.poll() is not None:
-                    raise RuntimeError("ComfyUI startup failed: " + log_path.read_text(errors="replace")[-3000:])
-                try:
-                    info = api("/object_info")
-                    break
-                except (OSError, ValueError):
-                    if time.monotonic() > deadline:
-                        raise TimeoutError("ComfyUI startup timeout")
-                    time.sleep(1)
+        with (nullcontext() if warm_base else log_path.open("w", encoding="utf-8")) as log:
+            if warm_base:
+                emit("起動準備", "ComfyUI FastH3を再利用しています" if os.environ.get("HAYATE_COMFY_REUSED") == "1" else "ComfyUI FastH3を準備しました", 1)
+                info = api("/object_info")
+            else:
+                process = subprocess.Popen(args, cwd=runtime, stdout=log, stderr=subprocess.STDOUT)
+                emit("起動準備", "ComfyUI FastH3を起動しています", 1)
+                deadline = time.monotonic() + 180
+                while True:
+                    if process.poll() is not None:
+                        raise RuntimeError("ComfyUI startup failed: " + log_path.read_text(errors="replace")[-3000:])
+                    try:
+                        info = api("/object_info")
+                        break
+                    except (OSError, ValueError):
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("ComfyUI startup timeout")
+                        time.sleep(1)
             validate_nodes(info, graph)
             client = uuid.uuid4().hex
-            ws = websocket.create_connection(f"ws://127.0.0.1:{port}/ws?clientId={client}", timeout=2)
+            ws = websocket.create_connection(base.replace("http://", "ws://") + f"/ws?clientId={client}", timeout=2)
             queued = api("/prompt", {"prompt": graph, "client_id": client})
             if queued.get("node_errors") or not queued.get("prompt_id"):
                 raise RuntimeError("ComfyUI rejected graph: " + json.dumps(queued))
@@ -106,7 +136,7 @@ def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None)
             started = time.monotonic()
             last_history = 0.
             while time.monotonic() - started < timeout:
-                if process.poll() is not None:
+                if process is not None and process.poll() is not None:
                     raise RuntimeError("ComfyUI exited: " + log_path.read_text(errors="replace")[-3000:])
                 try:
                     raw = ws.recv()
@@ -136,16 +166,22 @@ def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None)
                     with av.open(str(path)) as media:
                         if not media.streams.audio or next(media.decode(video=0), None) is None:
                             raise RuntimeError("Output video/audio validation failed")
-                    runtime_log = log_path.read_text(errors="replace")
+                    runtime_log = new_server_log() if server_log is not None else log_path.read_text(errors="replace")
                     if "VSA tiles" not in runtime_log or "kernel failed" in runtime_log:
                         raise RuntimeError("VSA activation not confirmed; inspect " + str(log_path))
                     shutil.copyfile(path, output)
+                    if warm_base:
+                        path.unlink(missing_ok=True)
                     emit("完了", "動画と音声を保存しました", 100)
                     return
             raise TimeoutError("FastH3 generation timed out")
     finally:
         if ws is not None:
             ws.close()
+        if server_log is not None:
+            log_path.write_text(new_server_log(), encoding="utf-8")
+        for staged in staged_inputs:
+            staged.unlink(missing_ok=True)
         if process is not None and process.poll() is None:
             process.terminate()
             try:

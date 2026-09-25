@@ -168,3 +168,84 @@ def test_image_graph_and_command(tmp_path):
     assert plan.executable
     assert "--first-image" in plan.command and "--last-image" in plan.command
     assert not backend.plan(replace(req, last_image_path=image)).executable
+
+
+@pytest.mark.parametrize("vsa_active", [True, False])
+def test_warm_worker_uses_existing_server_and_separate_job_inputs(tmp_path, monkeypatch, vsa_active):
+    import io
+    from urllib.parse import urlparse
+    from PIL import Image
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    input_dir = tmp_path / "shared-input"
+    output_dir = tmp_path / "shared-output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (output_dir / "result.mp4").write_bytes(b"mp4-test")
+    server_log = tmp_path / "server.log"
+    server_log.write_text("VSA tiles from prior job\n")
+    first = tmp_path / "first.png"
+    last = tmp_path / "last.png"
+    Image.new("RGB", (32, 32)).save(first)
+    Image.new("RGB", (32, 32)).save(last)
+    for key, value in {
+        "HAYATE_COMFY_BASE_URL": "http://127.0.0.1:8189",
+        "HAYATE_COMFY_INPUT_DIR": str(input_dir),
+        "HAYATE_COMFY_OUTPUT_DIR": str(output_dir),
+        "HAYATE_COMFY_SERVER_LOG": str(server_log),
+        "HAYATE_COMFY_REUSED": "1",
+    }.items():
+        monkeypatch.setenv(key, value)
+    graph = {
+        "16": {"class_type": "SaveVideo", "inputs": {}},
+        "18": {"class_type": "LoadImage", "inputs": {"image": "first.png"}},
+        "19": {"class_type": "LoadImage", "inputs": {"image": "last.png"}},
+    }
+    seen = {}
+
+    def urlopen(request, **kwargs):
+        path = urlparse(request.full_url if hasattr(request, "full_url") else request).path
+        if path == "/object_info":
+            payload = {kind: {"input": {"required": {}}} for kind in ("SaveVideo", "LoadImage")}
+        elif path == "/prompt":
+            seen.update(json.loads(request.data))
+            assert seen["prompt"]["18"]["inputs"]["image"] != "first.png"
+            assert seen["prompt"]["19"]["inputs"]["image"] != "last.png"
+            assert seen["prompt"]["18"]["inputs"]["image"] != seen["prompt"]["19"]["inputs"]["image"]
+            assert len(list(input_dir.glob("*.png"))) == 2
+            if vsa_active:
+                with server_log.open("a") as log:
+                    log.write("VSA tiles current job\n")
+            payload = {"prompt_id": "owned"}
+        else:
+            payload = {"owned": {"status": {"completed": True, "status_str": "success"},
+                                "outputs": {"16": {"videos": [{"filename": "result.mp4"}]}}}}
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(comfy_worker.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(comfy_worker.subprocess, "Popen", lambda *a, **kw: pytest.fail("server restarted"))
+    monkeypatch.setattr(comfy_worker.signal, "signal", lambda *args: None)
+    ws = SimpleNamespace(recv=lambda: '{"type":"status","data":{}}', close=lambda: None)
+    monkeypatch.setitem(sys.modules, "websocket", SimpleNamespace(
+        create_connection=lambda *a, **kw: ws, WebSocketTimeoutException=TimeoutError))
+
+    class Media:
+        streams = SimpleNamespace(audio=[1])
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def decode(self, **kw): return iter([object()])
+
+    monkeypatch.setitem(sys.modules, "av", SimpleNamespace(open=lambda *a: Media()))
+    output = tmp_path / "final.mp4"
+    if vsa_active:
+        comfy_worker.run(runtime, output, graph, first_image=first, last_image=last)
+        assert output.read_bytes() == b"mp4-test"
+        assert not (output_dir / "result.mp4").exists()
+    else:
+        with pytest.raises(RuntimeError, match="VSA activation"):
+            comfy_worker.run(runtime, output, graph, first_image=first, last_image=last)
+        assert not output.exists()
+    assert not list(input_dir.iterdir())
+    assert ("VSA tiles current job" in output.with_suffix(".comfy.log").read_text()) == vsa_active
+    assert "prior job" not in output.with_suffix(".comfy.log").read_text()
