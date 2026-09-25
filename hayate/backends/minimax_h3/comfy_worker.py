@@ -49,6 +49,8 @@ def validate_nodes(info, graph):
 
 def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None):
     import websocket
+    model_label = "FL2VA" if any(node.get("inputs", {}).get("unet_name", "").startswith("minimax_h3_fl2va")
+                                  for node in graph.values()) else "FastH3"
     output.parent.mkdir(parents=True, exist_ok=True)
     warm_base = os.environ.get("HAYATE_COMFY_BASE_URL", "")
     if warm_base:
@@ -109,11 +111,11 @@ def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None)
     try:
         with (nullcontext() if warm_base else log_path.open("w", encoding="utf-8")) as log:
             if warm_base:
-                emit("起動準備", "ComfyUI FastH3を再利用しています" if os.environ.get("HAYATE_COMFY_REUSED") == "1" else "ComfyUI FastH3を準備しました", 1)
+                emit("起動準備", f"ComfyUI {model_label}を再利用しています" if os.environ.get("HAYATE_COMFY_REUSED") == "1" else f"ComfyUI {model_label}を準備しました", 1)
                 info = api("/object_info")
             else:
                 process = subprocess.Popen(args, cwd=runtime, stdout=log, stderr=subprocess.STDOUT)
-                emit("起動準備", "ComfyUI FastH3を起動しています", 1)
+                emit("起動準備", f"ComfyUI {model_label}を起動しています", 1)
                 deadline = time.monotonic() + 180
                 while True:
                     if process.poll() is not None:
@@ -132,7 +134,7 @@ def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None)
             if queued.get("node_errors") or not queued.get("prompt_id"):
                 raise RuntimeError("ComfyUI rejected graph: " + json.dumps(queued))
             pid = queued["prompt_id"]
-            emit("モデル読込", "FastH3モデルを読み込んでいます", 3)
+            emit("モデル読込", f"{model_label}モデルを読み込んでいます", 3)
             started = time.monotonic()
             last_history = 0.
             while time.monotonic() - started < timeout:
@@ -167,8 +169,9 @@ def run(runtime, output, graph, timeout=7200, first_image=None, last_image=None)
                         if not media.streams.audio or next(media.decode(video=0), None) is None:
                             raise RuntimeError("Output video/audio validation failed")
                     runtime_log = new_server_log() if server_log is not None else log_path.read_text(errors="replace")
-                    if "VSA tiles" not in runtime_log or "kernel failed" in runtime_log:
-                        raise RuntimeError("VSA activation not confirmed; inspect " + str(log_path))
+                    uses_vsa = any(node["class_type"] == "SolAttnMiniMax" for node in graph.values())
+                    if "kernel failed" in runtime_log or (uses_vsa and "VSA tiles" not in runtime_log):
+                        raise RuntimeError("VSA activation/kernel check failed; inspect " + str(log_path))
                     shutil.copyfile(path, output)
                     if warm_base:
                         path.unlink(missing_ok=True)

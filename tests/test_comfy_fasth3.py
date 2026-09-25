@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from hayate.backends.minimax_h3.comfy_fasth3 import (
-    build_graph, readiness, runtime_paths, MODEL_IDS, ComfyFastH3Backend,
+    build_graph, readiness, runtime_paths, MODEL_IDS, FL2VA_MODEL_IDS, ComfyFastH3Backend,
 )
 from hayate.backends.minimax_h3.generation import GenerationRequest
 from hayate.backends.minimax_h3 import comfy_worker
@@ -80,6 +80,7 @@ def test_web_api_routes_comfy_profile_without_starting_an_engine(tmp_path):
     service = SimpleNamespace(status=lambda: {"assets": assets})
     with TestClient(create_app(tmp_path, job_manager=manager, model_setup_service=service)) as client:
         assert client.get("/api/models/setup").json()["comfy_fasth3"]["ready"]
+        assert client.get("/api/models/setup").json()["comfy_fl2va"]["missing_models"] == ["transformer_w4a8"]
         response = client.post("/api/jobs", json={"prompt": "car", "profile": "comfy_fasth3", "vsa_keep": 5},
                                headers={"X-HAYATE-UI": "1"})
         assert response.status_code == 202, response.text
@@ -90,6 +91,42 @@ def test_web_api_routes_comfy_profile_without_starting_an_engine(tmp_path):
                                headers={"X-HAYATE-UI": "1"})
         assert response.status_code == 422
         assert len(submitted) == 1
+        response = client.post("/api/jobs", json={"prompt": "anime", "profile": "comfy_fl2va"},
+                               headers={"X-HAYATE-UI": "1"})
+        assert response.status_code == 422
+        assert len(submitted) == 1
+
+
+def test_web_api_routes_image_to_matching_fl2va_graph(tmp_path):
+    import io
+    from PIL import Image
+    from fastapi.testclient import TestClient
+    from hayate.webui.server import create_app
+    from hayate.webui.jobs import JobStore
+
+    assets = prepared(tmp_path) + [{"id": "transformer_w4a8", "status": "verified"}]
+    submitted = []
+    manager = SimpleNamespace(store=JobStore(tmp_path / "jobs.sqlite"),
+                              submit=lambda plan, request: (submitted.append(plan) or
+                                                            {"id": "image-job", "request": request,
+                                                             "plan": plan.to_dict()}))
+    service = SimpleNamespace(status=lambda: {"assets": assets})
+    picture = io.BytesIO()
+    Image.new("RGB", (512, 288), "blue").save(picture, format="PNG")
+    with TestClient(create_app(tmp_path, job_manager=manager, model_setup_service=service)) as client:
+        assert client.get("/api/models/setup").json()["comfy_fl2va"]["ready"]
+        uploaded = client.post("/api/assets", files={"file": ("start.png", picture.getvalue(), "image/png")},
+                               headers={"X-HAYATE-UI": "1"})
+        assert uploaded.status_code == 200
+        response = client.post("/api/jobs", json={"prompt": "same 2D anime character moving gently",
+                                                  "profile": "comfy_fl2va", "image_asset_id": uploaded.json()["id"],
+                                                  "width": 512, "height": 288},
+                               headers={"X-HAYATE-UI": "1"})
+        assert response.status_code == 202, response.text
+        graph = json.loads(submitted[0].command[submitted[0].command.index("--graph") + 1])
+        assert graph["7"]["inputs"]["first_frame"] == ["18", 0]
+        assert graph["11"]["class_type"] == "BasicScheduler"
+        assert "--first-image" in submitted[0].command
 
 
 def test_output_path_cannot_escape_job_directory(tmp_path):
@@ -110,9 +147,10 @@ def test_worker_api_to_saved_output_and_owned_cleanup(tmp_path, monkeypatch, vsa
     raw = tmp_path / ".comfy/result"
     raw.mkdir(parents=True)
     (raw / "video.mp4").write_bytes(b"mp4-test")
-    graph = {"16": {"class_type": "SaveVideo", "inputs": {}}}
+    graph = {"16": {"class_type": "SaveVideo", "inputs": {}},
+             "3": {"class_type": "SolAttnMiniMax", "inputs": {}}}
     responses = {
-        "/object_info": {"SaveVideo": {"input": {"required": {}}}},
+        "/object_info": {kind: {"input": {"required": {}}} for kind in ("SaveVideo", "SolAttnMiniMax")},
         "/prompt": {"prompt_id": "owned"},
         "/history/owned": {"owned": {"status": {"completed": True, "status_str": "success"},
                                     "outputs": {"16": {"videos": [{"filename": "video.mp4"}]}}}},
@@ -152,22 +190,33 @@ def test_image_graph_and_command(tmp_path):
     from PIL import Image
     from dataclasses import replace
     from hayate.backends.minimax_h3.comfy_fasth3 import build_graph
-    graph = build_graph('move', 1, 512, 288, 124, first_image=True, last_image=True)
+    graph = build_graph('move', 1, 512, 288, 124, first_image=True, last_image=True, mode="fl2va")
     assert graph['7']['inputs']['first_frame'] == ['18', 0]
     assert graph['7']['inputs']['last_frame'] == ['19', 0]
     assert graph['18']['inputs']['image'] == 'first.png'
     assert graph['19']['class_type'] == 'LoadImage'
+    assert graph['1']['inputs']['unet_name'] == 'minimax_h3_fl2va_pruned_w4a8_mixed.safetensors'
+    assert graph['11']['class_type'] == 'BasicScheduler'
+    assert graph['11']['inputs']['steps'] == 50
+    assert graph['10']['inputs']['sampler_name'] == 'res_multistep'
+    assert '3' not in graph and '2' not in graph
     plain = build_graph('move', 1, 512, 288, 124)
     assert '18' not in plain and 'first_frame' not in plain['7']['inputs']
 
-    backend = ComfyFastH3Backend(tmp_path, prepared(tmp_path))
+    backend = ComfyFastH3Backend(tmp_path, prepared(tmp_path) + [{"id": "transformer_w4a8", "status": "verified"}], mode="fl2va")
     image = tmp_path / "frame.png"
-    Image.new("RGB", (32, 32)).save(image)
-    req = GenerationRequest("move", tmp_path, tmp_path / "out.mp4")
+    Image.new("RGB", (512, 288)).save(image)
+    req = GenerationRequest("move", tmp_path, tmp_path / "out.mp4", width=512, height=288)
     plan = backend.plan(replace(req, image_path=image, last_image_path=image))
     assert plan.executable
     assert "--first-image" in plan.command and "--last-image" in plan.command
     assert not backend.plan(replace(req, last_image_path=image)).executable
+    assert not backend.plan(replace(req, image_path=image, width=512, height=512)).executable
+    assert not ComfyFastH3Backend(tmp_path, prepared(tmp_path)).plan(replace(req, image_path=image)).executable
+    assert readiness(tmp_path, prepared(tmp_path), mode="fl2va")["missing_models"] == ["transformer_w4a8"]
+    assert set(FL2VA_MODEL_IDS) <= {a["id"] for a in backend.assets}
+    with pytest.raises(ValueError, match="text only"):
+        build_graph('move', 1, 512, 288, 124, first_image=True)
 
 
 @pytest.mark.parametrize("vsa_active", [True, False])
@@ -199,6 +248,7 @@ def test_warm_worker_uses_existing_server_and_separate_job_inputs(tmp_path, monk
         monkeypatch.setenv(key, value)
     graph = {
         "16": {"class_type": "SaveVideo", "inputs": {}},
+        "3": {"class_type": "SolAttnMiniMax", "inputs": {}},
         "18": {"class_type": "LoadImage", "inputs": {"image": "first.png"}},
         "19": {"class_type": "LoadImage", "inputs": {"image": "last.png"}},
     }
@@ -207,7 +257,7 @@ def test_warm_worker_uses_existing_server_and_separate_job_inputs(tmp_path, monk
     def urlopen(request, **kwargs):
         path = urlparse(request.full_url if hasattr(request, "full_url") else request).path
         if path == "/object_info":
-            payload = {kind: {"input": {"required": {}}} for kind in ("SaveVideo", "LoadImage")}
+            payload = {kind: {"input": {"required": {}}} for kind in ("SaveVideo", "LoadImage", "SolAttnMiniMax")}
         elif path == "/prompt":
             seen.update(json.loads(request.data))
             assert seen["prompt"]["18"]["inputs"]["image"] != "first.png"

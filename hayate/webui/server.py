@@ -72,6 +72,7 @@ PROFILE_NAMES = (
     "fasth3_fast",
     "custom",
     "comfy_fasth3",
+    "comfy_fl2va",
 )
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ASSET_ID_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -168,6 +169,7 @@ class GenerationPayload(BaseModel):
         "fasth3_fast",
         "custom",
         "comfy_fasth3",
+        "comfy_fl2va",
     ] = "fast_sage_detail"
     task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
     vsa_keep: Literal[5.0, 7.5, 10.0] = 10.0
@@ -506,6 +508,7 @@ def create_app(
     async def get_model_setup():
         result = await asyncio.to_thread(model_setup.status)
         result["comfy_fasth3"] = comfy_readiness(root, result["assets"])
+        result["comfy_fl2va"] = comfy_readiness(root, result["assets"], mode="fl2va")
         return result
 
     @app.post("/api/models/setup/prepare")
@@ -758,9 +761,10 @@ def create_app(
             ).hexdigest()[:24]
             prompt_cache = Path(current.prompt_cache_dir) / f"{cache_key}.safetensors"
         try:
-            if payload.profile == "comfy_fasth3":
+            if payload.profile in {"comfy_fasth3", "comfy_fl2va"}:
                 assets = (await asyncio.to_thread(model_setup.status))["assets"]
-                backend = ComfyFastH3Backend(root, assets, payload.vsa_keep, payload.fast_vae_batch)
+                backend = ComfyFastH3Backend(root, assets, payload.vsa_keep, payload.fast_vae_batch,
+                                             mode="fl2va" if payload.profile == "comfy_fl2va" else "fasth3")
             elif payload.profile in {"fasth3", "fasth3_fast"}:
                 backend = FastH3GenerationBackend(
                     current.fastvideo_model_path or str(root / "models" / "fastvideo"),

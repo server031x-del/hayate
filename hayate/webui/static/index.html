@@ -203,8 +203,14 @@
                 <label class="profile-card">
                   <input type="radio" name="profile" value="comfy_fasth3" disabled>
                   <span class="profile-icon fasth3">H4</span>
-                  <span class="profile-text"><b>FastH3 INT8</b><small>4-Step · VSA · Fast VAE</small></span>
+                  <span class="profile-text"><b>FastH3 INT8</b><small>テキスト専用 · 4-Step · VSA</small></span>
                   <em>最速</em>
+                </label>
+                <label class="profile-card">
+                  <input type="radio" name="profile" value="comfy_fl2va" disabled>
+                  <span class="profile-icon detail">I2V</span>
+                  <span class="profile-text"><b>画像優先 FL2VA</b><small>開始画像を使う · 50ステップ · 画風重視</small></span>
+                  <em>画像向け</em>
                 </label>
                 <label class="profile-card selected">
                   <input type="radio" name="profile" value="fast_sage_detail" checked>
@@ -261,8 +267,8 @@
                 <summary><span>詳細設定</span><small id="advancedSummary">Seed・Sampler・EasyCache・メモリ・GPU</small><i aria-hidden="true"></i></summary>
                 <div class="advanced-body">
                   <div id="comfyOptions" class="option-box" hidden>
-                    <div class="option-head"><div><b>FastH3 · 画質と速度</b><small>テキスト・開始／終了画像から動画＋音声を4ステップで生成します。各ジョブでモデルを読み込みます。</small></div></div>
-                    <div class="setting-grid two">
+                    <div class="option-head"><div><b id="comfyOptionsTitle">FastH3 · 画質と速度</b><small id="comfyOptionsNote">テキストから動画＋音声を4ステップで生成します。</small></div></div>
+                    <div class="setting-grid two" id="comfySpeedOptions">
                       <label><span>VSA保持率</span><select id="vsaKeep"><option value="10">10% · 品質比較の基準</option><option value="7.5">7.5% · バランス</option><option value="5">5% · 速度優先</option></select></label>
                       <label><span>VAEタイル並列数</span><select id="fastVaeBatch"><option value="2">2 · 高速</option><option value="1">1 · メモリ節約</option></select></label>
                     </div>
@@ -405,6 +411,7 @@
                   <label class="model-config-picker"><span>おすすめの構成</span>
                     <select id="modelConfiguration">
                       <option value="comfy">FastH3：高速4-Step · INT8＋共有VAE</option>
+                      <option value="fl2va">画像向け：FL2VA · W4A8＋共有VAE</option>
                       <option value="standard">おすすめ：品質・速度バランス（通常H3 W4A8）</option>
                       <option value="pdd">比較用：PDD 8-Step（標準構成＋追加LoRA）</option>
                       <option value="all">上級者向け：すべてのモデルを表示</option>

@@ -2,6 +2,8 @@
 
 HAYATEの生成画面で **FastH3 INT8** を選び、テキストから動画と音声を生成する経路です。
 通常H3、公式FastVideoとは別の実行環境を使います。
+FastVideoの4-Step Preview重みはT2VA専用です。画像を付けても画風や人物を保持できないため、
+HAYATEでは画像入力を拒否します。画像から生成する場合は **画像優先 FL2VA** を使います。
 
 ## Colabで準備
 
@@ -60,4 +62,13 @@ GPUメモリは待機中も使用します。必要なら `HAYATE_COMFY_KEEP_WAR
 
 ## 開始・終了画像
 
-生成画面から開始画像、任意で終了画像を指定できます。専用入力フォルダにPNGとして保存し、上流のMiniMaxH3ImageToVideoのfirst_frame / last_frameへ接続します。終了画像のみは受け付けません。画像条件付き生成の実GPUでの画質・速度は未検証です。
+設定の「画像向け：FL2VA」構成でFL2VA W4A8 DiTと共有TEXT・VAEを取得・検証し、
+生成画面で「画像優先 FL2VA」を選択します。開始画像は必須、終了画像は任意です。
+専用入力フォルダのPNGを上流のMiniMaxH3ImageToVideoのfirst_frame / last_frameへ接続し、
+通常の50ステップスケジュールで生成します。FastH3用の4-Step sigma列やVSAは使いません。
+画像の縦横比と出力比率が違う場合は「画像に合わせる」を使用します。
+アニメ絵ならプロンプトにも「同じ2Dアニメの画風・同じキャラクターを保つ」と明記してください。
+FL2VAの開始画像は動画全編の同一人物を保証する参照画像機能ではなく、画質・速度は実GPUで未検証です。
+
+- [FastVideoの適用範囲](https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree)
+- [ComfyUIのI2Vワークフロー](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_minimax_h3_i2v.json)

@@ -1,4 +1,5 @@
 const SAMPLE_PROMPT = "A premium cinematic commercial for a sleek metallic silver sports car. The same car accelerates along a coastal highway at golden hour, dynamic tracking shots, close-ups of LED headlights and aerodynamic bodywork, then a final hero shot in a modern city plaza. Realistic motion, synchronized engine sound and cinematic music, no text, no logo, no watermark.";
+const I2V_SAMPLE_PROMPT = "Use <Picture 1> as the exact opening frame. Keep the same character, facial features, clothing, colors, and original 2D anime illustration style throughout. The character blinks and moves gently while the camera makes a slow, subtle push-in. Preserve the original background and lighting. Do not turn the character into a photorealistic or live-action person. No text, no logo, no watermark.";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -53,6 +54,7 @@ const ACTIVE_STATUSES = ["queued", "running", "stopping", "cancelling"];
 const FINAL_STATUSES = ["succeeded", "partial", "failed", "cancelled", "interrupted"];
 const PROFILE_LABELS = {
   comfy_fasth3: "FastH3 INT8",
+  comfy_fl2va: "画像優先 FL2VA",
   fast_sage_detail: "高速・画質優先",
   fast_sage: "速度優先",
   quality: "Quality",
@@ -397,30 +399,43 @@ function applyProfile(profile) {
 
 function updateComfyControls() {
   const profile = selectedProfile();
-  const comfy = profile === "comfy_fasth3";
-  const textOnly = profile === "fasth3" || profile === "fasth3_fast";
+  const comfy = profile === "comfy_fasth3" || profile === "comfy_fl2va";
+  const imageMode = profile === "comfy_fl2va";
+  const textOnly = profile === "comfy_fasth3" || profile === "fasth3" || profile === "fasth3_fast";
   $("#comfyOptions").hidden = !comfy;
+  $("#comfySpeedOptions").hidden = imageMode;
   ["imageFile", "lastImageFile"].forEach((id) => { $(`#${id}`).disabled = textOnly; });
   $("#imageGuidance").textContent = textOnly
     ? "このプロファイルはテキストのみ（T2VA）に対応しています。画像を使う場合は別のプロファイルを選択してください。"
     : comfy
-      ? "FastH3でも開始・終了画像を指定できます。終了画像を使う場合は開始画像も選択してください。"
+      ? "開始画像の画風と人物を引き継ぐFL2VAモデルを使います。画像比率を出力に合わせ、プロンプトにも同じ2D画風を明記してください。"
       : "画像なしでも生成できます。終了画像を使う場合は開始画像も選択してください。";
-  ["vsaKeep", "fastVaeBatch"].forEach((id) => { $(`#${id}`).disabled = !comfy; });
+  ["vsaKeep", "fastVaeBatch"].forEach((id) => { $(`#${id}`).disabled = !comfy || imageMode; });
+  $("#comfyOptionsTitle").textContent = imageMode ? "FL2VA · 画像から動画" : "FastH3 · 画質と速度";
+  $("#comfyOptionsNote").textContent = imageMode
+    ? "画像用のFL2VA重みで開始画像を条件にします。50ステップのためFastH3より時間がかかります。"
+    : "テキストから動画＋音声を4ステップで生成します。画像は使えません。";
   $("#promptCache").disabled = comfy;
   if (comfy) {
     const note = $("#profileAvailabilityNote");
-    note.textContent = "FastH3 INT8の必要モデルと実行環境を準備済みです。画像の有無からタスクを自動判定します。";
-    note.className = "availability-note ready";
+    const ready = state.modelSetup?.[profile]?.ready === true;
+    note.textContent = ready
+      ? (imageMode
+        ? "FL2VAの必要モデルと実行環境を準備済みです。開始画像を選択してください。"
+        : "FastH3 INT8はテキスト生成専用です。画像から生成する場合は『画像優先 FL2VA』を選んでください。")
+      : (state.modelSetup?.[profile]?.message || "必要モデルと実行環境を確認中です");
+    note.className = `availability-note ${ready ? "ready" : "blocked"}`;
     note.hidden = false;
     $("#advancedAvailabilityNote").hidden = true;
-    $("#task").value = "auto";
+    $("#task").value = imageMode ? "fl2va" : "t2va";
     $("#easycache").checked = false;
     $("#pdd").checked = false;
     ["task", ...ADVANCED_CONTROL_IDS].forEach((id) => {
-      setControlAvailability($(`#${id}`), false, "FastH3は専用設定を使用します");
+      setControlAvailability($(`#${id}`), false, "このComfyUIプロファイルは専用設定を使用します");
     });
-    $("#profileSummary").textContent = `FastH3 · 4-Step · VSA ${$("#vsaKeep").value}% · Fast VAE`;
+    $("#profileSummary").textContent = imageMode
+      ? "FL2VA · 50ステップ · 開始画像を使用"
+      : `FastH3 · 4-Step · VSA ${$("#vsaKeep").value}% · Fast VAE`;
   }
   updateSubmitState();
 }
@@ -431,7 +446,7 @@ function updateProfileSummary() {
     $("#profileSummary").textContent = profile === "fasth3_fast"
       ? "FastH3 v1 Blackwell · sm100a/FA4/compile · 5 points（4-forward） · T2VAのみ"
       : "FastH3 VSA · 5 points（4-forward） · T2VAのみ";
-  } else if (profile !== "comfy_fasth3") {
+  } else if (profile !== "comfy_fasth3" && profile !== "comfy_fl2va") {
     const parts = [`${$("#steps").value} points`, $("#attention").value === "sageattn" ? "SageAttention" : "SDPA"];
     if ($("#easycache").checked) parts.push("EasyCache");
     if ($("#pdd").checked) parts.push("PDD 8-Step");
@@ -444,6 +459,7 @@ function updateProfileSummary() {
 
 function profileCanGenerate(profile = selectedProfile()) {
   if (profile === "comfy_fasth3") return state.modelSetup?.comfy_fasth3?.ready === true;
+  if (profile === "comfy_fl2va") return state.modelSetup?.comfy_fl2va?.ready === true;
   const capabilities = modelCapabilities();
   if (profile === "fasth3" || profile === "fasth3_fast") {
     return profile === "fasth3_fast" ? capabilities.fastH3FastReady : capabilities.fastH3Ready;
@@ -538,6 +554,7 @@ function modelAssetStatusLabel(asset, status) {
 const STANDARD_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32", "checkpoint_support"];
 const PDD_MODEL_IDS = ["pdd_fl2va_8step", "pdd_adaln_affine"];
 const COMFY_MODEL_IDS = ["transformer_fastvideo_vsa_4step", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32"];
+const FL2VA_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32"];
 const MODEL_ASSET_SHORT_LABELS = {
   transformer_w4a8: "DiT",
   text_encoder_nvfp4_awq: "TEXT",
@@ -620,6 +637,8 @@ function updateModelAvailability() {
   const standardEnabled = capabilities.coreReady;
   const comfyStatus = state.modelSetup?.comfy_fasth3;
   setProfileAvailability("comfy_fasth3", comfyStatus?.ready === true, comfyStatus?.message || "モデル・実行環境を確認中");
+  const fl2vaStatus = state.modelSetup?.comfy_fl2va;
+  setProfileAvailability("comfy_fl2va", fl2vaStatus?.ready === true, fl2vaStatus?.message || "画像用モデル・実行環境を確認中");
   $("#comfyReadiness").textContent = comfyStatus?.message || "FastH3環境は未確認です。再スキャンしてください";
   $("#comfyReadiness").className = `availability-note ${comfyStatus?.ready ? "ready" : comfyStatus ? "blocked" : ""}`.trim();
   ["fast_sage", "fast_sage_detail", "fast", "quality", "custom"].forEach((profile) => {
@@ -690,7 +709,7 @@ function updateModelAvailability() {
   }
   const checked = $('input[name="profile"]:checked');
   if (!checked || checked.disabled) {
-    const fallback = ["comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
+    const fallback = ["comfy_fl2va", "comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
       .map((profile) => profileRadio(profile))
       .find((radio) => radio && !radio.disabled);
     if (fallback) {
@@ -857,7 +876,7 @@ async function uploadImage(file, last = false) {
     const asset = await api("/api/assets", { method: "POST", body: form });
     setImageAsset(last, { ...asset, name });
     const task = $("#task");
-    if (!task.disabled && selectedProfile() !== "comfy_fasth3") task.value = "auto";
+    if (!task.disabled && !["comfy_fasth3", "comfy_fl2va"].includes(selectedProfile())) task.value = "auto";
     updateProfileSummary();
     saveDraft();
     toast(`${last ? "終了" : "開始"}画像を読み込みました`);
@@ -1053,7 +1072,7 @@ function generationPayload() {
     image_asset_id: state.imageAsset?.id || null,
     last_image_asset_id: state.lastImageAsset?.id || null,
     reference_asset_ids: [],
-    use_prompt_cache: selectedProfile() !== "comfy_fasth3" && $("#promptCache").checked,
+    use_prompt_cache: !["comfy_fasth3", "comfy_fl2va"].includes(selectedProfile()) && $("#promptCache").checked,
     steps: Number($("#steps").value),
     attention_backend: $("#attention").value,
     easycache: $("#easycache").checked,
@@ -1071,6 +1090,8 @@ function generationPayload() {
 
 function validatePayload(payload) {
   if (!payload.prompt) return "プロンプトを入力してください";
+  if (payload.profile === "comfy_fasth3" && (payload.image_asset_id || payload.last_image_asset_id)) return "FastH3はテキスト専用です。画像優先 FL2VAを選択してください";
+  if (payload.profile === "comfy_fl2va" && !payload.image_asset_id) return "画像優先 FL2VAには開始画像が必要です";
   if (payload.last_image_asset_id && !payload.image_asset_id) return "終了画像を使う場合は開始画像も選択してください";
   const dimensions = [payload.width, payload.height];
   if (dimensions.some((value) => !Number.isFinite(value) || value < 256 || value > 1536 || value % 32)) {
@@ -1092,6 +1113,15 @@ async function submitGeneration(event) {
     toast(problem, "error");
     if (!payload.prompt) $("#prompt").focus();
     return;
+  }
+  if (payload.profile === "comfy_fl2va" && state.imageSizes.first) {
+    const { width, height } = state.imageSizes.first;
+    if (Math.abs(Math.log((payload.width / payload.height) / (width / height))) > 0.04) {
+      toast("開始画像と出力の縦横比が異なります。『画像に合わせる』を押してください", "error", {
+        action: { label: "画像に合わせる", run: matchImageResolution },
+      });
+      return;
+    }
   }
   if (!profileCanGenerate(payload.profile)) {
     toast("選択した構成のモデルが未取得または未検証です。設定画面でモデル状態を確認してください", "error", {
@@ -1899,6 +1929,7 @@ function configurationAssets(assets) {
   const choice = $("#modelConfiguration").value;
   if (choice === "all") return assets;
   if (choice === "comfy") return assets.filter((asset) => COMFY_MODEL_IDS.includes(asset.id));
+  if (choice === "fl2va") return assets.filter((asset) => FL2VA_MODEL_IDS.includes(asset.id));
   const ids = choice === "pdd" ? [...STANDARD_MODEL_IDS, ...PDD_MODEL_IDS] : STANDARD_MODEL_IDS;
   return assets.filter((asset) => ids.includes(asset.id));
 }
@@ -1999,6 +2030,7 @@ function renderModelSetup(payload) {
   const pending = downloadableAssets(assets);
   const configurationNotes = {
     comfy: `FastH3用${assets.length}ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。TEXT・VAEは標準構成と共有します。取得後は生成画面で「FastH3 INT8」を選択してください。`,
+    fl2va: `画像から生成するための${assets.length}ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。取得後は生成画面で「画像優先 FL2VA」を選択してください。`,
     standard: `迷ったらこの構成。「高速・画質優先」で使う通常H3の必要セットです。必要ファイル ${assets.length}件・合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。取得後は「標準パスを適用」を押してください。`,
     pdd: `標準セットに8-Step用の追加モデルを含みます。品質は標準構成と比較してください。必要ファイル ${assets.length}件・合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。`,
     all: "実験用・別エンジン用も含みます。すべてのモデルを取得する必要はありません。",
@@ -2329,12 +2361,13 @@ function bindEvents() {
   }));
   $("#samplePrompt").addEventListener("click", () => {
     const previous = $("#prompt").value;
+    const sample = state.imageAsset ? I2V_SAMPLE_PROMPT : SAMPLE_PROMPT;
     state.promptTransform = null;
-    setPrompt(SAMPLE_PROMPT);
+    setPrompt(sample);
     updatePromptTransformNote();
     saveDraft();
     $("#prompt").focus();
-    if (previous.trim() && previous !== SAMPLE_PROMPT) {
+    if (previous.trim() && previous !== sample) {
       toast("サンプルを入力しました", "info", { action: { label: "元に戻す", run: () => { setPrompt(previous); saveDraft(); } } });
     }
   });
