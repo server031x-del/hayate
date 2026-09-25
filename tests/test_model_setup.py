@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from hayate.webui.model_setup import (
     ModelArtifact,
     ModelAsset,
+    MODEL_ASSETS,
     ModelSetupError,
     ModelSetupService,
     _download_huggingface_file,
@@ -21,6 +23,18 @@ from hayate.webui.server import create_app
 
 
 PAYLOAD = b"audited-model-payload"
+
+
+def test_catalog_has_complete_digests_for_audited_models():
+    for asset in MODEL_ASSETS:
+        for artifact in asset.artifacts:
+            assert re.fullmatch(r"[0-9a-f]{64}", artifact.sha256), (
+                asset.id, artifact.remote_path)
+    fast = next(asset for asset in MODEL_ASSETS if asset.id == "transformer_fastvideo_vsa_4step")
+    assert fast.revision == "e042fe480f58806578713532b8ae4e3d47d1bd63"
+    assert fast.artifacts[0].sha256 == (
+        "7221ae65d78780354d51e5048d29728d9f1f8fb9baf50b1dd3df85f5101413d3"
+    )
 
 
 def _asset() -> ModelAsset:

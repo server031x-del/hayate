@@ -44,6 +44,7 @@ WebSocket進捗をHAYATEへ送り、API履歴のMP4を検証して生成一覧�
 ## 出典と固定版
 
 - [参考記事](https://note.com/sepiablue/n/n4157aa9f4f7d)
+- [FastH3 INT8モデル](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/e042fe480f58806578713532b8ae4e3d47d1bd63/minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors): revision `e042fe480f58806578713532b8ae4e3d47d1bd63`、22,898,594,920 bytes、SHA-256 `7221ae65d78780354d51e5048d29728d9f1f8fb9baf50b1dd3df85f5101413d3`
 - [著者のAPIワークフロー](https://github.com/sepiablue-ai/minimax_h3_workflows/blob/main/fasth3_vsa5_chunk2_fastvae_fhd.json)
 - Kijai/ComfyUI VSA: `10febb01d7be73d1491cf5e5347b5ab8b6c2c09e`
 - Kijai/ComfyUI-KJNodes: `57105374f47d0fbb49c9c3926fb981702e0a4b5c`

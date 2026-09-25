@@ -104,7 +104,7 @@ MODEL_ASSETS: tuple[ModelAsset, ...] = (
         "transformer",
         "FastH3 4-Step INT8 · HAYATE ComfyUI経路",
         "Kijai/MiniMax-H3-experimental",
-        "f4cac997f880e93cf6940af61ee8d58ef31ff7f7",
+        "e042fe480f58806578713532b8ae4e3d47d1bd63",
         MINIMAX_LICENSE,
         MINIMAX_LICENSE_URL,
         (
@@ -112,7 +112,7 @@ MODEL_ASSETS: tuple[ModelAsset, ...] = (
                 "minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors",
                 "minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors",
                 22_898_594_920,
-                "7221ae65d78780354d51e5048d29728d9f1f8fb9baf50b1dd3df85f5101413d",
+                "7221ae65d78780354d51e5048d29728d9f1f8fb9baf50b1dd3df85f5101413d3",
             ),
         ),
         execution_backend="external_comfyui_vsa",
