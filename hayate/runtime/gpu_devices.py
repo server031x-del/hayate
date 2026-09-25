@@ -180,7 +180,9 @@ def discover_gpu_devices(
         try:
             if len(parts) >= 6:
                 index = int(parts[0])
-                uuid = parts[1].upper() if GPU_UUID_RE.fullmatch(parts[1]) else None
+                # CUDA_VISIBLE_DEVICES matches the UUID's letter case.  Keep
+                # nvidia-smi's exact spelling for child-process masking.
+                uuid = parts[1] if GPU_UUID_RE.fullmatch(parts[1]) else None
                 name = parts[2]
                 memory = _memory_bytes(parts[3])
                 compute = parts[4] or None

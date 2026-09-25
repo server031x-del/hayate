@@ -33,3 +33,19 @@ def test_hardware_profiler_parses_two_gpus_and_selects_gpu_zero(monkeypatch):
     assert profile.primary_gpu.index == 0
     assert not profile.gpus[1].selected_for_inference
     assert profile.cuda_driver_api_version == "13.0"
+
+
+def test_hardware_profiler_keeps_gpu_uuid_case(monkeypatch):
+    cuda_uuid = "GPU-2ef4f750-ac29-3d72-d24f-93f116f8e399"
+
+    def runner(command, **kwargs):
+        if command[0] == "nvidia-smi" and len(command) > 1:
+            stdout = f"0, {cuda_uuid}, NVIDIA A100-SXM4-40GB, 40441, 8.0, 570.0\n"
+        else:
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(HardwareProfiler, "_torch_info", lambda self: (None, None, None, []))
+    profile = HardwareProfiler(runner=runner).profile()
+    assert profile.primary_gpu is not None
+    assert profile.primary_gpu.uuid == cuda_uuid

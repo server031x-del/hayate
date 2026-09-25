@@ -187,7 +187,7 @@ class HardwareProfiler:
             try:
                 index = int(parts[0])
                 if len(parts) == 6:
-                    uuid = parts[1].upper() if parts[1].upper().startswith("GPU-") else None
+                    uuid = parts[1] if parts[1].upper().startswith("GPU-") else None
                     name = parts[2]
                     memory_bytes = int(float(parts[3]) * 1024 * 1024)
                     compute_capability = parts[4] or None
