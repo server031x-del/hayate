@@ -474,7 +474,11 @@ function profileCanGenerate(profile = selectedProfile()) {
   }
   if (profile === "pdd" || profile === "pdd_sage") return capabilities.pddReady;
   if (profile === "a100_pdd") return capabilities.largePddReady;
-  if (LARGE_GPU_PROFILES.includes(profile)) return capabilities.largeReady;
+  if (profile === "a100_detail") return capabilities.largeReady && capabilities.sageReady;
+  if (profile === "a100_quality") return capabilities.largeReady;
+  if (profile === "fast_sage" || profile === "fast_sage_detail") {
+    return capabilities.coreReady && capabilities.sageReady;
+  }
   return capabilities.known && capabilities.coreReady;
 }
 
@@ -597,19 +601,23 @@ function modelCapabilities() {
   const gpus = Array.isArray(state.bootstrap?.hardware?.gpus) ? state.bootstrap.hardware.gpus : [];
   const largeGpu = gpus.some((gpu) => gpu.h3_eligible !== false && Number(gpu.vram_total_bytes) >= LARGE_GPU_MIN_BYTES);
   const a100Ready = known && a100Missing.length === 0;
-  // Resident profiles also run the W4A8 set; the INT8 set is the optimized one.
-  const largeModelsReady = a100Ready || (known && coreMissing.length === 0);
+  const native = state.modelSetup?.native;
+  const standardReady = known && coreMissing.length === 0
+    && state.modelSetup?.active_configuration === "standard" && native?.ready === true;
+  const largeReady = largeGpu && a100Ready
+    && state.modelSetup?.active_configuration === "a100" && native?.ready === true;
   return {
     known,
-    coreReady: known && coreMissing.length === 0,
-    pddReady: known && coreMissing.length === 0 && pddMissing.length === 0,
+    coreReady: standardReady,
+    pddReady: standardReady && pddMissing.length === 0,
     coreMissing,
     pddMissing,
     a100Missing,
     a100Ready,
     largeGpu,
-    largeReady: largeGpu && largeModelsReady,
-    largePddReady: largeGpu && largeModelsReady && pddMissing.length === 0,
+    largeReady,
+    largePddReady: largeReady && pddMissing.length === 0,
+    sageReady: native?.sage_ready === true,
     fastH3Ready: state.fastH3Status?.ready === true,
     fastH3FastReady: state.fastH3Status?.fast_profile_ready === true,
   };
@@ -655,21 +663,30 @@ function updateModelAvailability() {
   const profileNote = $("#profileAvailabilityNote");
   const advancedNote = $("#advancedAvailabilityNote");
   const standardReason = capabilities.known
-    ? `標準H3の未取得または未検証: ${modelMissingLabel(capabilities.coreMissing)}`
+    ? capabilities.coreMissing.length
+      ? `標準H3の未取得または未検証: ${modelMissingLabel(capabilities.coreMissing)}`
+      : state.modelSetup?.active_configuration !== "standard"
+        ? "標準H3のモデル定義を適用してください"
+        : state.modelSetup?.native?.issues?.[0] || "ネイティブ生成環境を確認中です"
     : "モデル取得状況を確認中です";
   const pddReason = capabilities.known
     ? `PDD追加モデルの未取得または未検証: ${modelMissingLabel(capabilities.pddMissing)}`
     : "モデル取得状況を確認中です";
 
   const standardEnabled = capabilities.coreReady;
+  const sageReason = state.modelSetup?.native?.sage_issue || "SageAttentionの利用条件を確認中です";
   const comfyStatus = state.modelSetup?.comfy_fasth3;
   setProfileAvailability("comfy_fasth3", comfyStatus?.ready === true, comfyStatus?.message || "モデル・実行環境を確認中");
   const fl2vaStatus = state.modelSetup?.comfy_fl2va;
   setProfileAvailability("comfy_fl2va", fl2vaStatus?.ready === true, fl2vaStatus?.message || "画像用モデル・実行環境を確認中");
   $("#comfyReadiness").textContent = comfyStatus?.message || "FastH3環境は未確認です。再スキャンしてください";
   $("#comfyReadiness").className = `availability-note ${comfyStatus?.ready ? "ready" : comfyStatus ? "blocked" : ""}`.trim();
-  ["fast_sage", "fast_sage_detail", "fast", "quality", "custom"].forEach((profile) => {
+  ["fast", "quality", "custom"].forEach((profile) => {
     setProfileAvailability(profile, standardEnabled, standardEnabled ? "" : standardReason);
+  });
+  ["fast_sage", "fast_sage_detail"].forEach((profile) => {
+    setProfileAvailability(profile, standardEnabled && capabilities.sageReady,
+      !standardEnabled ? standardReason : sageReason);
   });
   setProfileAvailability("pdd", capabilities.pddReady, capabilities.pddReady ? "" : capabilities.coreReady ? pddReason : standardReason);
   setProfileAvailability(
@@ -686,10 +703,15 @@ function updateModelAvailability() {
   fastProfile?.closest(".profile-card")?.toggleAttribute("hidden", !capabilities.fastH3FastReady);
   const a100Reason = !capabilities.largeGpu
     ? "VRAM 38 GiB以上のGPUが必要です"
-    : `A100構成の未取得または未検証: ${modelMissingLabel(capabilities.a100Missing)}`;
-  ["a100_detail", "a100_quality"].forEach((profile) => {
-    setProfileAvailability(profile, capabilities.largeReady, capabilities.largeReady ? "" : a100Reason);
-  });
+    : capabilities.a100Missing.length
+      ? `A100構成の未取得または未検証: ${modelMissingLabel(capabilities.a100Missing)}`
+      : state.modelSetup?.active_configuration !== "a100"
+        ? "設定でA100構成のモデル定義を適用してください"
+        : state.modelSetup?.native?.issues?.[0] || "A100生成環境を確認中です";
+  setProfileAvailability("a100_detail", capabilities.largeReady && capabilities.sageReady,
+    !capabilities.largeReady ? a100Reason : sageReason);
+  setProfileAvailability("a100_quality", capabilities.largeReady,
+    capabilities.largeReady ? "" : a100Reason);
   setProfileAvailability(
     "a100_pdd",
     capabilities.largePddReady,
@@ -716,18 +738,18 @@ function updateModelAvailability() {
   if (profileNote && capabilities.known && capabilities.largeGpu) {
     profileNote.hidden = false;
     profileNote.className = `availability-note ${capabilities.largeReady ? "ready" : "blocked"}`;
-    profileNote.textContent = capabilities.a100Ready
-      ? "大容量GPUとA100構成（INT8 DiT）を検出しました。「A100 高速・高画質」がおすすめです。"
-      : capabilities.largeReady
-        ? "大容量GPUを検出しました。A100プロファイルは現在のW4A8構成でも全常駐で動作します。設定でA100構成を取得すると8-bit重みとINT8 Tensor Coreを使えます。"
-        : `大容量GPUを検出しました。${a100Reason}`;
+    profileNote.textContent = capabilities.largeReady
+      ? capabilities.sageReady
+        ? "A100構成（INT8 DiT）の生成条件を確認済みです。「A100 高速・高画質」を選べます。"
+        : `A100構成はSDPAで利用できます。「A100 品質基準」を選ぶか、SageAttentionを準備してください。${sageReason}`
+      : `大容量GPUを検出しました。${a100Reason}`;
   }
 
   // Sampler, task, memory and cache controls depend on the standard H3
   // checkpoint. Seed, prompt cache and GPU selection remain usable because
   // they are independent of a particular model package.
-  const dependentEnabled = capabilities.coreReady;
-  const dependentReason = capabilities.coreReady ? "" : standardReason;
+  const dependentEnabled = capabilities.coreReady || capabilities.largeReady;
+  const dependentReason = dependentEnabled ? "" : standardReason;
   ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
     setControlAvailability($(`#${id}`), dependentEnabled, dependentReason);
   });
@@ -740,11 +762,11 @@ function updateModelAvailability() {
   });
   if (dependentEnabled && task?.value && $("#task option:checked")?.disabled) task.value = "auto";
 
-  const pddEnabled = capabilities.pddReady;
+  const pddEnabled = capabilities.pddReady || capabilities.largePddReady;
   setControlAvailability($("#pdd"), pddEnabled, pddEnabled ? "" : pddReason);
   if (!pddEnabled && $("#pdd").checked) $("#pdd").checked = false;
   if (advancedNote) {
-    if (!capabilities.known || capabilities.coreReady) {
+    if (!capabilities.known || dependentEnabled) {
       advancedNote.hidden = true;
     } else {
       advancedNote.hidden = false;
@@ -761,7 +783,7 @@ function updateModelAvailability() {
   }
   const checked = $('input[name="profile"]:checked');
   if (!checked || checked.disabled) {
-    const fallback = ["a100_detail", "comfy_fl2va", "comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
+    const fallback = ["a100_detail", "a100_quality", "comfy_fl2va", "comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
       .map((profile) => profileRadio(profile))
       .find((radio) => radio && !radio.disabled);
     if (fallback) {

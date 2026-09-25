@@ -56,6 +56,7 @@ from hayate.runtime.gpu_devices import (
 from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
 from hayate.webui.model_setup import ModelSetupError, ModelSetupService
+from hayate.webui.native_readiness import native_readiness
 from hayate.webui.openai_settings import (
     DEFAULT_OPENAI_MODEL,
     OpenAISettingsStore,
@@ -553,11 +554,20 @@ def create_app(
         result = await asyncio.to_thread(model_setup.status)
         result["comfy_fasth3"] = comfy_readiness(root, result["assets"])
         result["comfy_fl2va"] = comfy_readiness(root, result["assets"], mode="fl2va")
-        registry_name = Path(settings_store.load().config_path).name
+        current = settings_store.load()
+        registry_name = Path(current.config_path).name
         result["active_configuration"] = {
             "models.yaml": "standard",
             "models.a100.yaml": "a100",
         }.get(registry_name, "custom")
+        active_download = any(asset.get("status") == "downloading" for asset in result["assets"])
+        result["native"] = (
+            {"ready": False, "sage_ready": False, "issues": ["モデル取得中はネイティブ実行環境を確認しません"]}
+            if active_download
+            else await asyncio.to_thread(
+                native_readiness, current, result["assets"], result["active_configuration"], root,
+            )
+        )
         return result
 
     @app.post("/api/models/setup/prepare")
@@ -781,6 +791,11 @@ def create_app(
     @app.post("/api/jobs", status_code=202)
     async def create_job(payload: GenerationPayload):
         current = settings_store.load()
+        if payload.profile in {"a100_detail", "a100_quality", "a100_pdd"} and Path(current.config_path).name != "models.a100.yaml":
+            raise HTTPException(422, {
+                "message": "generation preflight failed",
+                "issues": ["A100プロファイルには設定画面でA100構成を取得し、「標準パスを適用」してください"],
+            })
         output_dir = Path(current.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         token = os.urandom(4).hex()

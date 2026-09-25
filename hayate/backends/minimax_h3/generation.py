@@ -377,9 +377,19 @@ class ExternalH3GenerationBackend:
                 issues.append(f"{role.value} loader validation failed: {exc}")
                 continue
             if validation.status is not LoaderStatus.SUPPORTED:
+                details: list[str] = []
+                missing_modules = validation.details.get("missing_modules") or []
+                if missing_modules:
+                    details.append("missing Python modules: " + ", ".join(missing_modules))
+                layout_errors = validation.details.get("layout_error_examples") or []
+                if layout_errors:
+                    details.append("layout: " + "; ".join(layout_errors[:2]))
+                if validation.requirements:
+                    details.append("required: " + "; ".join(validation.requirements))
                 issues.append(
                     f"{role.value} execution loader is {validation.status.value}: "
                     f"{validation.reason}"
+                    + (" (" + "; ".join(details) + ")" if details else "")
                 )
 
         if request.pdd_checkpoint is not None:

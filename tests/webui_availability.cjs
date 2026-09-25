@@ -42,7 +42,7 @@ vm.runInContext(fs.readFileSync('hayate/webui/static/app.js', 'utf8').replace(/i
 const run = script => vm.runInContext(script, context);
 run('updateModelAvailability()');
 assert(radios.every(r => r.disabled), 'Unknown inventory must not enable profiles');
-run('state.modelSetup = {assets: STANDARD_MODEL_IDS.map(id => ({id,status:"verified"}))}; updateModelAvailability()');
+run('state.modelSetup = {assets: STANDARD_MODEL_IDS.map(id => ({id,status:"verified"})), active_configuration:"standard", native:{ready:true,sage_ready:true,issues:[]}}; updateModelAvailability()');
 assert(!radios.find(r => r.value === 'fast_sage_detail').disabled);
 assert(radios.find(r => r.value === 'pdd').disabled);
 assert(elements.get('#pdd').disabled);
@@ -91,7 +91,7 @@ assert.equal(run('generationPayload().seed'), null, 'Random seed mode sends null
 elements.get('#seedRandom').checked = false;
 
 // An explicit profile choice is restored once its models become available again.
-run('state.modelSetup = {assets: STANDARD_MODEL_IDS.map(id => ({id,status:"verified"}))}; state.preferredProfile = "quality"; updateModelAvailability()');
+run('state.modelSetup = {assets: STANDARD_MODEL_IDS.map(id => ({id,status:"verified"})), active_configuration:"standard", native:{ready:true,sage_ready:true,issues:[]}}; state.preferredProfile = "quality"; updateModelAvailability()');
 assert.equal(checked.value, 'quality', 'Preferred profile is re-selected when enabled');
 run('state.preferredProfile = null');
 
@@ -114,15 +114,22 @@ assert.match(preflight, /missing DiT/);
 assert.match(run('errorMessage({detail:[{loc:["body","width"], msg:"must be a multiple of 32"}]}, 422)'), /幅: must be a multiple of 32/);
 console.log('Seed mode, preferred profile, prompt display, validation and error formatting passed');
 
-// A100 profiles appear only with a >=38 GiB adapter and run on either model set.
+// A100 profiles require their actual INT8 registry and runtime, not just a large GPU.
 const a100 = radios.find(r => r.value === 'a100_detail');
-run('state.bootstrap = {hardware: {gpus: [{h3_eligible: true, vram_total_bytes: 12 * 1024 ** 3}]}}; state.modelSetup = {assets: A100_MODEL_IDS.map(id => ({id,status:"verified"}))}; updateModelAvailability()');
+run('state.bootstrap = {hardware: {gpus: [{h3_eligible: true, vram_total_bytes: 12 * 1024 ** 3}]}}; state.modelSetup = {assets: A100_MODEL_IDS.map(id => ({id,status:"verified"})), active_configuration:"a100", native:{ready:true,sage_ready:true,issues:[]}}; updateModelAvailability()');
 assert(a100.disabled, 'A100 profile needs a large GPU');
 assert.equal(a100.card.hidden, true, 'A100 cards stay hidden on consumer GPUs');
-run('state.bootstrap.hardware.gpus.push({h3_eligible: true, vram_total_bytes: 80 * 1024 ** 3}); updateModelAvailability()');
+run('state.modelSetup = {assets: STANDARD_MODEL_IDS.map(id => ({id,status:"verified"})), active_configuration:"standard", native:{ready:true,sage_ready:true,issues:[]}}; state.bootstrap.hardware.gpus.push({h3_eligible: true, vram_total_bytes: 80 * 1024 ** 3}); updateModelAvailability()');
+assert(a100.disabled, 'W4A8 standard assets cannot enable A100 INT8 profile');
+run('state.modelSetup = {assets: A100_MODEL_IDS.map(id => ({id,status:"verified"})), active_configuration:"a100", native:{ready:true,sage_ready:false,issues:[],sage_issue:"SageAttention missing"}}; updateModelAvailability()');
+assert(a100.disabled, 'SageAttention is required by the A100 detail profile');
+assert(!radios.find(r => r.value === 'a100_quality').disabled, 'SDPA stays available without SageAttention');
+run('state.modelSetup.native.sage_ready = true; updateModelAvailability()');
 assert(!a100.disabled, 'INT8 A100 set on an 80 GB GPU enables the A100 profile');
 assert.equal(a100.card.hidden, false);
 assert(radios.find(r => r.value === 'a100_pdd').disabled, 'A100 PDD still needs the PDD models');
+checked = a100;
+run('updateModelAvailability()');
 assert.equal(checked.value, 'a100_detail', 'Large GPUs fall back to the A100 profile first');
 run(`state.bootstrap.profiles = {a100_detail: ${JSON.stringify({
   steps: 20, attention_backend: 'sageattn', easycache: true, pdd: false, easycache_threshold: 0.4,
