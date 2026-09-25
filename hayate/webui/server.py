@@ -135,6 +135,7 @@ class PromptAssistantPayload(BaseModel):
 class ModelDownloadPayload(BaseModel):
     asset_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
     license_accepted: bool = False
+    source_urls: dict[str, str] = Field(default_factory=dict)
 
 
 def _normalize_trusted_client_networks(
@@ -566,6 +567,7 @@ def create_app(
                 model_setup.start_download,
                 payload.asset_id,
                 license_accepted=payload.license_accepted,
+                source_urls=payload.source_urls,
             )
         except KeyError as exc:
             raise HTTPException(404, "unknown model asset") from exc

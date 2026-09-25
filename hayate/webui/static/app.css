@@ -384,6 +384,14 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .model-asset-action { min-width: 74px; height: 32px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-3); color: var(--muted); cursor: pointer; font-size: 10px; }
 .model-asset-action:hover:not(:disabled) { border-color: rgba(84,230,255,.35); color: var(--cyan); }
 .model-asset-action:disabled { cursor: not-allowed; opacity: .45; }
+.model-source-editor { margin-top: 11px; border-top: 1px solid var(--line); padding-top: 9px; }
+.model-source-editor summary { color: var(--cyan); cursor: pointer; font-size: 11px; font-weight: 700; }
+.model-source-editor summary small { color: var(--muted); font-weight: 400; margin-left: 5px; }
+.model-source-editor p { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 9px 0; }
+.model-source-field { display: grid; gap: 5px; margin: 9px 0; min-width: 0; }
+.model-source-field span { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.model-source-field input { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--text); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.model-source-field input:focus { outline: 2px solid var(--cyan); outline-offset: 1px; }
 .model-progress { height: 4px; margin-top: 7px; overflow: hidden; border-radius: 3px; background: rgba(143,171,204,.14); }
 .model-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--cyan), #88a2ff); transition: width .3s ease; }
 .model-setup-empty, .model-setup-note { color: var(--quiet); font-size: 10px; line-height: 1.5; }

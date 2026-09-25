@@ -224,3 +224,16 @@ CUDA while a queued WebUI generation owns the selected physical adapter.
 SQLite uses WAL and short transactions. Jobs left queued/running/stopping by an
 unclean WebUI shutdown are marked `interrupted` on restart rather than silently
 resumed. Existing completed artifacts remain visible in the library.
+
+## モデル取得元のURL変更
+
+モデルの標準URLがリンク切れになった場合は、設定 → モデルを準備 → 対象モデルの
+「取得元URLを変更」を開き、Hugging Faceのファイルページ（`/blob/`）または
+直接ファイルURL（`/resolve/`）を入力してからダウンロードします。
+複数ファイルの構成は変更したいファイルの欄だけ入力できます。
+空欄のファイルは従来の取得元を使います。
+
+保存先とファイルのサイズ・SHA-256はモデル台帳に固定されています。
+URLの移動先に同一のファイルがあれば配置されます。内容が変更された場合は
+「サイズが一致しません」または「SHA256が一致しません」と表示して配置しません。
+この機能で指定できるのは公開 Hugging Face のHTTPSファイルURLだけです。

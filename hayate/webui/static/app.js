@@ -17,6 +17,8 @@ const state = {
   promptTransform: null,
   promptAI: null,
   modelSetup: null,
+  modelSourceUrls: {},
+  openModelSources: new Set(),
   fastH3Status: null,
   modelTimer: null,
   dialogJobId: null,
@@ -975,6 +977,10 @@ function configurationAssets(assets) {
   return assets.filter(asset => ids.includes(asset.id));
 }
 let configurationDownloading = false;
+function modelSourceUrls(assetId) {
+  return Object.fromEntries(Object.entries(state.modelSourceUrls[assetId] || {})
+    .map(([path, url]) => [path, url.trim()]).filter(([, url]) => url));
+}
 async function downloadConfiguration() {
   if (configurationDownloading || !$("#modelLicenseConsent").checked || $("#modelConfiguration").value === "all") return;
   const assets = configurationAssets(state.modelSetup?.assets || []).filter(asset => asset.downloadable && !["ready", "invalid", "downloading"].includes(modelAssetStatus(asset)));
@@ -983,7 +989,9 @@ async function downloadConfiguration() {
   try {
     await api("/api/models/setup/prepare", {method: "POST", body: {}});
     for (const asset of assets) {
-      await api("/api/models/setup/download", {method: "POST", body: {asset_id: asset.id, license_accepted: true}});
+      await api("/api/models/setup/download", {method: "POST", body: {
+        asset_id: asset.id, license_accepted: true, source_urls: modelSourceUrls(asset.id),
+      }});
     }
     toast("選択した構成の取得を受け付けました。各モデルの進捗を確認してください");
   } catch (error) { toast(error.message, "error"); }
@@ -1043,11 +1051,23 @@ function renderModelSetup(payload) {
     const notes = Array.isArray(asset.notes) && asset.notes.length
       ? `<span class="model-asset-note">${escapeHTML(asset.notes.join(" / "))}</span>` : "";
     const experimental = asset.experimental ? `<span class="model-asset-experimental">EXPERIMENTAL</span>` : "";
+    const sourceFields = (asset.source_files || []).map(file => {
+      const saved = state.modelSourceUrls[asset.id]?.[file.remote_path] || "";
+      return `<label class="model-source-field"><span>${escapeHTML(file.remote_path)}</span>
+        <input type="url" inputmode="url" spellcheck="false" autocomplete="off"
+          data-model-source-asset="${escapeHTML(asset.id)}" data-model-source-file="${escapeHTML(file.remote_path)}"
+          value="${escapeHTML(saved)}" placeholder="${escapeHTML(file.source_url)}"
+          aria-label="${escapeHTML(file.remote_path)} の代替URL"></label>`;
+    }).join("");
+    const sourceEditor = status === "ready" ? "" : `<details class="model-source-editor" data-model-source-editor="${escapeHTML(asset.id)}" ${state.openModelSources.has(asset.id) ? "open" : ""}>
+      <summary>取得元URLを変更 <small>リンク切れの場合</small></summary>
+      <p>Hugging FaceのファイルURLを入力。空欄なら標準の取得元を使います。サイズとSHA-256が一致したファイルだけ配置します。</p>
+      ${sourceFields}</details>`;
     return `<article class="model-asset${asset.experimental ? " experimental" : ""}" data-model-id="${escapeHTML(asset.id || "")}">
       <div class="model-asset-main">
         <div class="model-asset-title"><span class="model-asset-role">${escapeHTML(role)}</span>${experimental}<b title="${escapeHTML(filename)}">${escapeHTML(asset.label || filename)}</b></div>
         <span class="model-asset-meta" title="${escapeHTML(path)}">${escapeHTML(filename)} · ${escapeHTML(size)}${provenance ? ` · ${provenance}` : ""}</span>
-        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${downloadDetail}${notes}${progress}
+        <span class="model-asset-status ${status}">${escapeHTML(modelAssetStatusLabel(asset, status))}</span>${downloadDetail}${notes}${progress}${sourceEditor}
       </div>
       <button type="button" class="model-asset-action" data-model-download="${escapeHTML(asset.id || "")}" ${canDownload ? "" : "disabled"}>${actionLabel}</button>
     </article>`;
@@ -1179,7 +1199,7 @@ async function downloadModel(assetId) {
   try {
     await api("/api/models/setup/download", {
       method: "POST",
-      body: { asset_id: assetId, license_accepted: true },
+      body: { asset_id: assetId, license_accepted: true, source_urls: modelSourceUrls(assetId) },
     });
     await refreshModelSetup(true);
     toast("モデルのダウンロードを開始しました。設定画面で進捗を確認できます");
@@ -1326,6 +1346,18 @@ function bindEvents() {
     const button = event.target.closest("[data-model-download]");
     if (button) downloadModel(button.dataset.modelDownload);
   });
+  $("#modelAssetList").addEventListener("input", (event) => {
+    const field = event.target.closest("[data-model-source-asset]");
+    if (!field) return;
+    const assetId = field.dataset.modelSourceAsset;
+    (state.modelSourceUrls[assetId] ||= {})[field.dataset.modelSourceFile] = field.value;
+  });
+  $("#modelAssetList").addEventListener("toggle", (event) => {
+    const editor = event.target.closest("[data-model-source-editor]");
+    if (!editor) return;
+    if (editor.open) state.openModelSources.add(editor.dataset.modelSourceEditor);
+    else state.openModelSources.delete(editor.dataset.modelSourceEditor);
+  }, true);
   $("#librarySearch").addEventListener("input", renderLibrary); $("#libraryFilter").addEventListener("change", renderLibrary);
   document.addEventListener("click", (event) => {
     const deleteTarget = event.target.closest("[data-delete-job]");

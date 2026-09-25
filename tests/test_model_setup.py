@@ -14,6 +14,8 @@ from hayate.webui.model_setup import (
     ModelAsset,
     ModelSetupError,
     ModelSetupService,
+    _download_huggingface_file,
+    _parse_huggingface_file_url,
 )
 from hayate.webui.server import create_app
 
@@ -273,6 +275,91 @@ def test_model_setup_api_uses_allowlist_and_requires_license_acceptance(tmp_path
         assert completed["status"] == "completed"
         downloads = client.get("/api/models/setup/downloads").json()["downloads"]
         assert downloads[accepted.json()["id"]]["status"] == "completed"
+
+
+def test_model_download_accepts_alternate_huggingface_file_url_and_verifies_bytes(tmp_path, monkeypatch):
+    asset = _asset()
+    service = ModelSetupService(tmp_path, assets=(asset,))
+    calls = []
+
+    def fake_fetch(url, temporary):
+        calls.append(url)
+        target = temporary / "moved" / "renamed.safetensors"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(PAYLOAD)
+        return target
+
+    monkeypatch.setattr("hayate.webui.model_setup._download_huggingface_file", fake_fetch)
+    url = "https://huggingface.co/new-owner/new-repo/blob/main/moved/renamed.safetensors?download=true"
+    assert _parse_huggingface_file_url(url) == (
+        "new-owner/new-repo", "main", "moved/renamed.safetensors")
+    with TestClient(create_app(tmp_path, model_setup_service=service)) as client:
+        response = client.post("/api/models/setup/download", json={
+            "asset_id": asset.id, "license_accepted": True,
+            "source_urls": {"model.safetensors": url},
+        }, headers={"X-HAYATE-UI": "1"})
+        assert response.status_code == 202
+        assert _wait(service, response.json()["id"])["status"] == "completed"
+        assert client.get("/api/models/setup").json()["assets"][0]["verified"] is True
+    assert calls == [url]
+    assert (tmp_path / "models/test/model.safetensors").read_bytes() == PAYLOAD
+
+
+def test_alternate_url_uses_huggingface_repo_revision_and_filename(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_hf_hub_download(**kwargs):
+        calls.append(kwargs)
+        return str(tmp_path / "moved.safetensors")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_hub_download)
+    result = _download_huggingface_file(
+        "https://huggingface.co/new-owner/new-repo/resolve/abc123/moved/model.safetensors",
+        tmp_path,
+    )
+    assert result == tmp_path / "moved.safetensors"
+    assert calls == [{
+        "repo_id": "new-owner/new-repo", "filename": "moved/model.safetensors",
+        "revision": "abc123", "local_dir": str(tmp_path),
+        "endpoint": "https://huggingface.co", "token": False,
+    }]
+
+
+@pytest.mark.parametrize("url", [
+    "http://huggingface.co/a/b/resolve/main/model.safetensors",
+    "https://huggingface.co.evil.test/a/b/resolve/main/model.safetensors",
+    "https://user@huggingface.co/a/b/resolve/main/model.safetensors",
+    "https://huggingface.co:8443/a/b/resolve/main/model.safetensors",
+    "https://huggingface.co/a/b/tree/main/model.safetensors",
+    "https://huggingface.co/a/b/resolve/main/%2e%2e/model.safetensors",
+])
+def test_model_download_rejects_untrusted_or_nonfile_urls(tmp_path, url):
+    service = ModelSetupService(tmp_path, assets=(_asset(),))
+    with TestClient(create_app(tmp_path, model_setup_service=service)) as client:
+        response = client.post("/api/models/setup/download", json={
+            "asset_id": "test_asset", "license_accepted": True,
+            "source_urls": {"model.safetensors": url},
+        }, headers={"X-HAYATE-UI": "1"})
+        assert response.status_code == 409
+    assert service.downloads() == {}
+
+
+def test_alternate_url_still_rejects_changed_model_bytes(tmp_path, monkeypatch):
+    asset = _asset()
+    service = ModelSetupService(tmp_path, assets=(asset,))
+
+    def changed(_url, temporary):
+        target = temporary / "different.safetensors"
+        target.write_bytes(b"x" * len(PAYLOAD))
+        return target
+
+    monkeypatch.setattr("hayate.webui.model_setup._download_huggingface_file", changed)
+    job = service.start_download(asset.id, license_accepted=True, source_urls={
+        "model.safetensors": "https://huggingface.co/other/repo/resolve/main/file.safetensors",
+    })
+    assert "SHA256" in _wait(service, job["id"])["message"]
+    assert service.status()["assets"][0]["verified"] is False
+    assert not (tmp_path / "models/test/model.safetensors").exists()
 
 
 def test_model_setup_can_explicitly_apply_standard_model_paths(tmp_path):

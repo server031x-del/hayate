@@ -7,7 +7,7 @@
   <script src="/assets/theme-init.js"></script>
   <title>HAYATE Studio</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/app.css?v=20260909-fasth3-images">
+  <link rel="stylesheet" href="/assets/app.css?v=20260925-model-source-url">
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -347,7 +347,7 @@
               <button type="button" class="secondary-button" id="downloadConfiguration" disabled>この構成の未取得モデルを取得</button>
               <label class="model-license-consent"><input id="modelLicenseConsent" type="checkbox"><span>各モデルのライセンスと利用規約を確認しました（ダウンロードを有効化）</span></label>
               <div class="model-asset-list" id="modelAssetList"><div class="model-setup-empty">モデル状態を確認しています…</div></div>
-              <p class="model-setup-note">大容量ファイルはGitに含めません。取得先・revision・SHA-256を固定し、中断後も安全に再実行できます。利用規約と容量を確認してからダウンロードしてください。</p>
+              <p class="model-setup-note">リンク切れ時は各モデルの「取得元URLを変更」からHugging FaceのファイルURLを指定できます。取得先とSHA-256は固定です。利用規約と容量を確認してからダウンロードしてください。</p>
               <details class="settings-fold"><summary>公式FastVideo経路 <small>大容量・上級者向け</small></summary><div class="fasth3-status-box">
                 <div><b>FastH3 / VSA 実験経路</b><small>通常のmayble H3とは別エンジンです。重みを読み込まずに利用条件だけ診断できます。</small><a class="model-source fasth3-source-link" href="https://huggingface.co/FastVideo/FastVideo-FastH3-4-step-Preview-v1-VSA-DataFree" target="_blank" rel="noreferrer">公式FastH3 v1モデルを開く</a><small>約148GB（約138GiB）の公式スナップショットは <code>scripts/setup_fasth3_wsl.ps1 -DownloadModel</code> を明示実行した場合だけ取得します。</small></div>
                 <button type="button" class="secondary-button small" id="checkFastH3">利用条件を診断</button>
@@ -427,6 +427,6 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <!-- Legacy cache key retained in this marker for clients that fingerprint the previous build. -->
   <!-- app.js?v=20260909-model-availability-v1 -->
-  <script src="/assets/app.js?v=20260909-fasth3-images" defer></script>
+  <script src="/assets/app.js?v=20260925-model-source-url" defer></script>
 </body>
 </html>

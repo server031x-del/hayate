@@ -69,4 +69,9 @@ assert.equal(run('generationPayload().last_image_asset_id'), 'last');
 assert(/id="prompt"[^>]*><\/textarea>/.test(html), 'Prompt starts empty');
 assert(html.includes('id="samplePrompt"'));
 assert(html.includes('id="lastImageFile"'));
+assert(html.includes('取得元URLを変更') || fs.readFileSync('hayate/webui/static/app.js', 'utf8').includes('取得元URLを変更'));
+run('state.modelSourceUrls.test_asset = {"model.safetensors":" https://huggingface.co/new/repo/resolve/main/file.safetensors "}');
+assert.deepEqual(JSON.parse(JSON.stringify(run('modelSourceUrls("test_asset")'))), {
+  'model.safetensors': 'https://huggingface.co/new/repo/resolve/main/file.safetensors',
+});
 console.log('Composer payload and empty initial prompt passed');

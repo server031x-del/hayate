@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import parse_qs, unquote, urlsplit
 
 
 HF_ENDPOINT = "https://huggingface.co"
@@ -288,6 +290,38 @@ def _default_downloader(asset: ModelAsset, artifact: ModelArtifact, target: Path
     return Path(downloaded)
 
 
+def _parse_huggingface_file_url(url: str) -> tuple[str, str, str]:
+    """Accept only public Hugging Face file links as alternate sources."""
+    if len(url) > 2048 or any(ord(char) < 32 for char in url):
+        raise ModelSetupError("URLが長すぎるか、不正な文字を含みます")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or parsed.netloc.lower() != "huggingface.co"
+            or parsed.fragment):
+        raise ModelSetupError("huggingface.co のHTTPSファイルURLを指定してください")
+    if parsed.query and parse_qs(parsed.query) not in ({"download": ["true"]}, {"download": ["1"]}):
+        raise ModelSetupError("URLのクエリは ?download=true のみ使用できます")
+    parts = [unquote(part) for part in parsed.path.split("/") if part]
+    if len(parts) < 5 or parts[2] not in {"resolve", "blob"}:
+        raise ModelSetupError("Hugging FaceのファイルURL（/resolve/ または /blob/）を指定してください")
+    owner, repo, _, revision, *filename = parts
+    if not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", part) for part in (owner, repo, revision)):
+        raise ModelSetupError("リポジトリ名またはrevisionが不正です")
+    if any(part in {".", ".."} or "\\" in part or "/" in part or not part
+           or any(ord(char) < 32 for char in part) for part in filename):
+        raise ModelSetupError("ファイルパスが不正です")
+    return f"{owner}/{repo}", revision, "/".join(filename)
+
+
+def _download_huggingface_file(url: str, target: Path) -> Path:
+    from huggingface_hub import hf_hub_download
+
+    repo_id, revision, filename = _parse_huggingface_file_url(url)
+    return Path(hf_hub_download(
+        repo_id=repo_id, filename=filename, revision=revision,
+        local_dir=str(target), endpoint=HF_ENDPOINT, token=False,
+    ))
+
+
 class ModelSetupService:
     """Detect and install only the audited HAYATE model catalog."""
 
@@ -473,6 +507,11 @@ class ModelSetupService:
             "sha256_ok": True if verified else (False if invalid_size else None),
             "status": status,
             "source_url": asset.source_url,
+            "source_files": [
+                {"remote_path": item.remote_path, "source_url": (
+                    f"{HF_ENDPOINT}/{asset.repo_id}/resolve/{asset.revision}/{item.remote_path}"
+                )} for item in asset.artifacts
+            ],
             "license": asset.license,
             "license_url": asset.license_url,
             "revision": asset.revision,
@@ -533,12 +572,21 @@ class ModelSetupService:
         with self._lock:
             return {key: dict(value) for key, value in self._state["downloads"].items()}
 
-    def start_download(self, asset_id: str, *, license_accepted: bool) -> dict:
+    def start_download(
+        self, asset_id: str, *, license_accepted: bool,
+        source_urls: dict[str, str] | None = None,
+    ) -> dict:
         asset = self._assets.get(asset_id)
         if asset is None:
             raise KeyError(asset_id)
         if not license_accepted:
             raise ModelSetupError("ライセンス条件への同意が必要です")
+        source_urls = source_urls or {}
+        artifact_paths = {item.remote_path for item in asset.artifacts}
+        if set(source_urls) - artifact_paths:
+            raise ModelSetupError("指定URLに対応するモデルファイルがありません")
+        for url in source_urls.values():
+            _parse_huggingface_file_url(url)
         with self._lock:
             if asset_id in self._active_assets:
                 raise ModelSetupError("このモデルは既にダウンロード中です")
@@ -567,7 +615,7 @@ class ModelSetupService:
             self._save_state()
         thread = threading.Thread(
             target=self._run_download,
-            args=(download_id, asset),
+            args=(download_id, asset, dict(source_urls)),
             name=f"hayate-model-{asset.id}",
             daemon=True,
         )
@@ -674,7 +722,10 @@ class ModelSetupService:
         assert last_error is not None
         raise last_error
 
-    def _run_download(self, download_id: str, asset: ModelAsset) -> None:
+    def _run_download(
+        self, download_id: str, asset: ModelAsset,
+        source_urls: dict[str, str] | None = None,
+    ) -> None:
         temp_root: Path | None = None
         try:
             self.prepare()
@@ -740,7 +791,11 @@ class ModelSetupService:
                     )
                     progress_thread.start()
                     try:
-                        downloaded = self._downloader(asset, artifact, temp_root).resolve()
+                        url = (source_urls or {}).get(artifact.remote_path)
+                        downloaded = (
+                            _download_huggingface_file(url, temp_root) if url
+                            else self._downloader(asset, artifact, temp_root)
+                        ).resolve()
                     finally:
                         progress_stop.set()
                         progress_thread.join(timeout=2)
