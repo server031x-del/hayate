@@ -67,6 +67,11 @@ class GenerationRequest:
     # explicit index or UUID is resolved to a UUID before the child process is
     # launched; inside upstream H3 the selected adapter remains cuda:0.
     gpu_device: str = AUTO_GPU
+    # 0 + stream is the consumer-GPU default: every conditioner layer lives in
+    # host RAM and is streamed through the GPU.  -1 keeps all layers resident.
+    text_encoder_gpu_layers: int = 0
+    text_encoder_stream: bool = True
+    int8_fast: bool = False
 
 
 @dataclass(frozen=True)
@@ -295,6 +300,8 @@ class ExternalH3GenerationBackend:
             issues.append("blocks_to_swap must be in the range 0..49")
         if request.activation_chunk_rows < 0:
             issues.append("activation_chunk_rows must be non-negative")
+        if request.text_encoder_gpu_layers < -1:
+            issues.append("text_encoder_gpu_layers must be -1 (all resident) or a non-negative count")
         if request.easycache_threshold < 0:
             issues.append("easycache_threshold must be non-negative")
         if not 0 <= request.easycache_start < request.easycache_end <= 1:
@@ -478,8 +485,9 @@ class ExternalH3GenerationBackend:
             "--act_chunk_rows",
             str(request.activation_chunk_rows),
             "--text_encoder_gpu_layers",
-            "0",
-            "--text_encoder_stream",
+            str(request.text_encoder_gpu_layers),
+            *(("--text_encoder_stream",) if request.text_encoder_stream else ()),
+            *(("--int8_fast",) if request.int8_fast else ()),
             "--vae_tiling",
             "--save_path",
             str(request.output.parent.resolve(strict=False)),

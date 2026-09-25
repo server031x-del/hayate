@@ -7,6 +7,15 @@ from hayate.loaders.base import BaseModelLoader, LoaderStatus, LoaderValidation
 from hayate.models.types import ModelRole, QuantizationFormat
 
 
+# Header audit, Comfy-Org/MiniMax-H3 revision 4cc1d817b6184899b41293954329f576cb5ae86b:
+# pruned FL2VA DiT 200 groups (4 Linears x 50 blocks), full FL2VA DiT 250,
+# Qwen3-VL conditioner 350 (layers 0-49 plus the vision tower).
+AUDITED_UPSTREAM_GROUPS: dict[ModelRole, frozenset[int]] = {
+    ModelRole.TRANSFORMER: frozenset({200, 250}),
+    ModelRole.TEXT_ENCODER: frozenset({350}),
+}
+
+
 class INT8ConvRotLoader(BaseModelLoader):
     format_name = "INT8 ConvRot"
 
@@ -22,6 +31,7 @@ class INT8ConvRotLoader(BaseModelLoader):
         int8_weights = sum(
             t.dtype == "I8" and t.name.lower().endswith(".weight") for t in report.tensors
         )
+        audited_groups = AUDITED_UPSTREAM_GROUPS.get(self.spec.role)
         if self.spec.role is ModelRole.VIDEO_VAE:
             reason = (
                 "INT8 ConvRot markers recognized; all 144 audited targets are Linear weights and "
@@ -29,6 +39,25 @@ class INT8ConvRotLoader(BaseModelLoader):
             )
             complete = quant_markers == scales == int8_weights == 144
             requirements = (() if complete else ("provide all 144 Video VAE ConvRot groups",))
+        elif audited_groups is not None:
+            # Upstream's audited int8 path (model_loader / conditioner) owns the
+            # key conversion and ConvRot un-rotation for these Comfy-Org exports.
+            complete = quant_markers == scales == int8_weights and int8_weights in audited_groups
+            reason = (
+                "INT8 ConvRot export matches an audited Comfy-Org layout; loaded by the pinned "
+                "upstream int8 path"
+                if complete
+                else "INT8 ConvRot markers recognized, but the group count is not an audited layout"
+            )
+            requirements = (
+                ()
+                if complete
+                else (
+                    "use an audited export: "
+                    + ", ".join(str(count) for count in sorted(audited_groups))
+                    + " complete weight/scale/marker groups",
+                )
+            )
         else:
             reason = "INT8 ConvRot markers recognized; execution binding is deferred to the upstream adapter"
             requirements = (

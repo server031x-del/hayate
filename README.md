@@ -8,6 +8,10 @@ Goal: run large generative AI models efficiently on consumer hardware.
 
 Initial target: MiniMax H3.
 
+## A100（40/80GB）で使う
+
+大容量GPUでは全ステージを常駐させ、8-bit INT8 ConvRot DiTをINT8 Tensor Coreで実行する「A100 高速・高画質」プロファイルと専用モデル構成を使えます。選定理由・導入手順・実機ベンチマークは[A100構成](docs/A100.md)を参照してください。A100実機での速度・画質は未測定です。
+
 ## FastH3 INT8をHAYATE UIで使う
 
 ComfyUI API経由の4-Step FastH3、VSA、Fast VAE Decodeに対応する経路を追加しました。

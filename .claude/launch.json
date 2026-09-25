@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hayate-webui",
+      "runtimeExecutable": ".venv/Scripts/hayate.exe",
+      "runtimeArgs": ["webui", "--host", "127.0.0.1", "--port", "7861"],
+      "port": 7861
+    }
+  ]
+}

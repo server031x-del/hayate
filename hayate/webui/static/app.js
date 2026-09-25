@@ -63,10 +63,16 @@ const PROFILE_LABELS = {
   fast: "Fast SDPA",
   fasth3: "FastH3 VSA",
   fasth3_fast: "FastH3 Blackwell",
+  a100_detail: "A100 高速・高画質",
+  a100_quality: "A100 品質基準",
+  a100_pdd: "A100 PDD 8-Step",
   custom: "Custom",
 };
-const SECONDARY_PROFILES = new Set(["pdd", "fast", "fasth3", "fasth3_fast", "custom"]);
-const ADVANCED_CONTROL_IDS = ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "pdd", "ecThreshold", "ecStart", "ecEnd", "ecSkips"];
+const LARGE_GPU_PROFILES = ["a100_detail", "a100_quality", "a100_pdd"];
+// Matches hayate.profiles.LARGE_GPU_MIN_VRAM_GIB (A100 40 GB reports ~39.4 GiB).
+const LARGE_GPU_MIN_BYTES = 38 * 1024 ** 3;
+const SECONDARY_PROFILES = new Set(["a100_pdd", "pdd", "fast", "fasth3", "fasth3_fast", "custom"]);
+const ADVANCED_CONTROL_IDS = ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "pdd", "ecThreshold", "ecStart", "ecEnd", "ecSkips", "textEncoderResident", "int8Fast"];
 const FIELD_LABELS = {
   prompt: "プロンプト", width: "幅", height: "高さ", duration_seconds: "動画の長さ", seed: "Seed",
   steps: "Scheduler points", blocks_to_swap: "Block swap", activation_chunk_rows: "Activation chunk rows",
@@ -392,6 +398,8 @@ function applyProfile(profile) {
     $("#blocksSwap").value = preset.blocks_to_swap;
     $("#chunkRows").value = preset.activation_chunk_rows;
     $("#vaeTile").value = preset.vae_tile_size;
+    $("#textEncoderResident").checked = Number(preset.text_encoder_gpu_layers) === -1;
+    $("#int8Fast").checked = Boolean(preset.int8_fast);
   }
   updateProfileSummary();
   updateComfyControls();
@@ -465,6 +473,8 @@ function profileCanGenerate(profile = selectedProfile()) {
     return profile === "fasth3_fast" ? capabilities.fastH3FastReady : capabilities.fastH3Ready;
   }
   if (profile === "pdd" || profile === "pdd_sage") return capabilities.pddReady;
+  if (profile === "a100_pdd") return capabilities.largePddReady;
+  if (LARGE_GPU_PROFILES.includes(profile)) return capabilities.largeReady;
   return capabilities.known && capabilities.coreReady;
 }
 
@@ -553,9 +563,14 @@ function modelAssetStatusLabel(asset, status) {
 
 const STANDARD_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32", "checkpoint_support"];
 const PDD_MODEL_IDS = ["pdd_fl2va_8step", "pdd_adaln_affine"];
+// A100 set: INT8 ConvRot DiT on INT8 tensor cores; the BF16 conditioner may replace the INT8 one.
+const A100_MODEL_IDS = ["transformer_int8_pruned", "text_encoder_int8_convrot", "video_vae_int8_convrot", "audio_vae_fp32", "checkpoint_support"];
 const COMFY_MODEL_IDS = ["transformer_fastvideo_vsa_4step", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32"];
 const FL2VA_MODEL_IDS = ["transformer_w4a8", "text_encoder_nvfp4_awq", "video_vae_int8_convrot", "audio_vae_fp32"];
 const MODEL_ASSET_SHORT_LABELS = {
+  transformer_int8_pruned: "INT8 DiT",
+  text_encoder_int8_convrot: "INT8 TEXT",
+  text_encoder_bf16: "BF16 TEXT",
   transformer_w4a8: "DiT",
   text_encoder_nvfp4_awq: "TEXT",
   video_vae_int8_convrot: "VIDEO VAE",
@@ -577,12 +592,24 @@ function modelCapabilities() {
   const missing = (ids) => ids.filter((id) => !isReady(id));
   const coreMissing = missing(STANDARD_MODEL_IDS);
   const pddMissing = missing(PDD_MODEL_IDS);
+  const a100Missing = missing(A100_MODEL_IDS)
+    .filter((id) => !(id === "text_encoder_int8_convrot" && isReady("text_encoder_bf16")));
+  const gpus = Array.isArray(state.bootstrap?.hardware?.gpus) ? state.bootstrap.hardware.gpus : [];
+  const largeGpu = gpus.some((gpu) => gpu.h3_eligible !== false && Number(gpu.vram_total_bytes) >= LARGE_GPU_MIN_BYTES);
+  const a100Ready = known && a100Missing.length === 0;
+  // Resident profiles also run the W4A8 set; the INT8 set is the optimized one.
+  const largeModelsReady = a100Ready || (known && coreMissing.length === 0);
   return {
     known,
     coreReady: known && coreMissing.length === 0,
     pddReady: known && coreMissing.length === 0 && pddMissing.length === 0,
     coreMissing,
     pddMissing,
+    a100Missing,
+    a100Ready,
+    largeGpu,
+    largeReady: largeGpu && largeModelsReady,
+    largePddReady: largeGpu && largeModelsReady && pddMissing.length === 0,
     fastH3Ready: state.fastH3Status?.ready === true,
     fastH3FastReady: state.fastH3Status?.fast_profile_ready === true,
   };
@@ -657,6 +684,20 @@ function updateModelAvailability() {
   );
   const fastProfile = profileRadio("fasth3_fast");
   fastProfile?.closest(".profile-card")?.toggleAttribute("hidden", !capabilities.fastH3FastReady);
+  const a100Reason = !capabilities.largeGpu
+    ? "VRAM 38 GiB以上のGPUが必要です"
+    : `A100構成の未取得または未検証: ${modelMissingLabel(capabilities.a100Missing)}`;
+  ["a100_detail", "a100_quality"].forEach((profile) => {
+    setProfileAvailability(profile, capabilities.largeReady, capabilities.largeReady ? "" : a100Reason);
+  });
+  setProfileAvailability(
+    "a100_pdd",
+    capabilities.largePddReady,
+    capabilities.largePddReady ? "" : capabilities.largeReady ? pddReason : a100Reason,
+  );
+  LARGE_GPU_PROFILES.forEach((profile) => {
+    profileRadio(profile)?.closest(".profile-card")?.toggleAttribute("hidden", !capabilities.largeGpu);
+  });
 
   if (profileNote) {
     if (!capabilities.known) {
@@ -672,6 +713,16 @@ function updateModelAvailability() {
     }
   }
 
+  if (profileNote && capabilities.known && capabilities.largeGpu) {
+    profileNote.hidden = false;
+    profileNote.className = `availability-note ${capabilities.largeReady ? "ready" : "blocked"}`;
+    profileNote.textContent = capabilities.a100Ready
+      ? "大容量GPUとA100構成（INT8 DiT）を検出しました。「A100 高速・高画質」がおすすめです。"
+      : capabilities.largeReady
+        ? "大容量GPUを検出しました。A100プロファイルは現在のW4A8構成でも全常駐で動作します。設定でA100構成を取得すると8-bit重みとINT8 Tensor Coreを使えます。"
+        : `大容量GPUを検出しました。${a100Reason}`;
+  }
+
   // Sampler, task, memory and cache controls depend on the standard H3
   // checkpoint. Seed, prompt cache and GPU selection remain usable because
   // they are independent of a particular model package.
@@ -680,6 +731,7 @@ function updateModelAvailability() {
   ["steps", "attention", "blocksSwap", "chunkRows", "vaeTile", "easycache", "ecThreshold", "ecStart", "ecEnd", "ecSkips"].forEach((id) => {
     setControlAvailability($(`#${id}`), dependentEnabled, dependentReason);
   });
+  ["textEncoderResident", "int8Fast"].forEach((id) => setControlAvailability($(`#${id}`), true));
   const task = $("#task");
   setControlAvailability(task, dependentEnabled, dependentReason);
   $$("#task option").forEach((option) => {
@@ -709,7 +761,7 @@ function updateModelAvailability() {
   }
   const checked = $('input[name="profile"]:checked');
   if (!checked || checked.disabled) {
-    const fallback = ["comfy_fl2va", "comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
+    const fallback = ["a100_detail", "comfy_fl2va", "comfy_fasth3", "fast_sage_detail", "fast_sage", "fast", "quality", "pdd", "fasth3", "fasth3_fast", "custom"]
       .map((profile) => profileRadio(profile))
       .find((radio) => radio && !radio.disabled);
     if (fallback) {
@@ -1085,6 +1137,9 @@ function generationPayload() {
     activation_chunk_rows: Number($("#chunkRows").value),
     vae_tile_size: Number($("#vaeTile").value),
     gpu_device: $("#gpuDevice").value || "auto",
+    text_encoder_gpu_layers: $("#textEncoderResident").checked ? -1 : 0,
+    text_encoder_stream: !$("#textEncoderResident").checked,
+    int8_fast: Boolean($("#int8Fast").checked),
   };
 }
 
@@ -1698,6 +1753,8 @@ function restoreCustomControls(request) {
     ecThreshold: request.easycache_threshold, ecStart: request.easycache_start, ecEnd: request.easycache_end,
     ecSkips: request.easycache_max_consecutive_skips, blocksSwap: request.blocks_to_swap,
     chunkRows: request.activation_chunk_rows, vaeTile: request.vae_tile_size,
+    textEncoderResident: request.text_encoder_gpu_layers === undefined ? undefined : Number(request.text_encoder_gpu_layers) === -1,
+    int8Fast: request.int8_fast,
   };
   Object.entries(values).forEach(([id, value]) => {
     if (value === undefined || value === null) return;
@@ -1928,6 +1985,7 @@ function modelSourceUrls(assetId) {
 function configurationAssets(assets) {
   const choice = $("#modelConfiguration").value;
   if (choice === "all") return assets;
+  if (choice === "a100") return assets.filter((asset) => A100_MODEL_IDS.includes(asset.id));
   if (choice === "comfy") return assets.filter((asset) => COMFY_MODEL_IDS.includes(asset.id));
   if (choice === "fl2va") return assets.filter((asset) => FL2VA_MODEL_IDS.includes(asset.id));
   const ids = choice === "pdd" ? [...STANDARD_MODEL_IDS, ...PDD_MODEL_IDS] : STANDARD_MODEL_IDS;
@@ -2028,14 +2086,16 @@ function renderModelSetup(payload) {
   const remaining = assets.filter((asset) => modelAssetStatus(asset) !== "ready").reduce((sum, asset) => sum + (Number(asset.size_bytes) || 0), 0);
   const consent = $("#modelLicenseConsent").checked;
   const pending = downloadableAssets(assets);
+  const activeRegistry = { a100: "A100構成", standard: "標準構成（W4A8）", custom: "カスタム定義" }[payload?.active_configuration] || "";
   const configurationNotes = {
+    a100: `A100など40/80GB GPU向け。8-bit INT8 ConvRot DiT（PDD互換）とINT8 TEXTを全常駐で使い、DiTはINT8 Tensor Coreで計算します。${assets.length}ファイル · 合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。取得後に「標準パスを適用」でA100構成へ切り替え、「A100 高速・高画質」を選択してください。80GBではTEXTをBF16（すべて表示から取得）に替えると無量子化になります。`,
     comfy: `FastH3用${assets.length}ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。TEXT・VAEは標準構成と共有します。取得後は生成画面で「FastH3 INT8」を選択してください。`,
     fl2va: `画像から生成するための${assets.length}ファイル · 合計 ${bytes(total)} · 未準備 ${bytes(remaining)}。取得後は生成画面で「画像優先 FL2VA」を選択してください。`,
     standard: `迷ったらこの構成。「高速・画質優先」で使う通常H3の必要セットです。必要ファイル ${assets.length}件・合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。取得後は「標準パスを適用」を押してください。`,
     pdd: `標準セットに8-Step用の追加モデルを含みます。品質は標準構成と比較してください。必要ファイル ${assets.length}件・合計 ${bytes(total)}（未準備 ${bytes(remaining)}）。`,
     all: "実験用・別エンジン用も含みます。すべてのモデルを取得する必要はありません。",
   };
-  $("#modelConfigurationNote").textContent = configurationNotes[choice] || "";
+  $("#modelConfigurationNote").textContent = `${configurationNotes[choice] || ""}${activeRegistry ? ` 現在の生成設定: ${activeRegistry}` : ""}`;
   const button = $("#downloadConfiguration");
   button.disabled = configurationDownloading || choice === "all" || !consent || !pending.length;
   button.textContent = configurationDownloading
@@ -2173,16 +2233,19 @@ async function prepareModelDirs() {
 }
 
 async function applyStandardPaths() {
+  const configuration = $("#modelConfiguration").value === "a100" ? "a100" : "standard";
   const ok = await confirmAction({
     eyebrow: "APPLY STANDARD PATHS",
-    title: "HAYATE標準のモデルパスを設定に反映しますか？",
-    body: "モデル定義・checkpoint・PDD・FastVideoのパスが標準フォルダに置き換わります。upstream・出力先・Pythonのパスは変更しません。",
+    title: configuration === "a100"
+      ? "A100構成（INT8 DiT・INT8 TEXT）のモデルパスを設定に反映しますか？"
+      : "HAYATE標準のモデルパスを設定に反映しますか？",
+    body: `モデル定義${configuration === "a100" ? "（configs/models.a100.yaml）" : "（configs/models.yaml）"}・checkpoint・PDD・FastVideoのパスが標準フォルダに置き換わります。upstream・出力先・Pythonのパスは変更しません。`,
     confirmLabel: "標準パスを適用",
   });
   if (!ok) return;
   await withBusyButton($("#applyStandardPaths"), async () => {
     try {
-      const result = await api("/api/models/setup/apply-standard", { method: "POST", body: {} });
+      const result = await api("/api/models/setup/apply-standard", { method: "POST", body: { configuration } });
       if (state.bootstrap) state.bootstrap.settings = result.settings;
       renderSettings(result.settings, result.readiness, result.openai);
       toast("標準モデルパスを設定に反映しました");
@@ -2251,6 +2314,11 @@ async function saveSettings() {
 function renderHardware(hardware) {
   const gpu = hardware?.gpus?.find((item) => item.selected_for_inference) || hardware?.gpus?.[0];
   if (gpu) $("#gpuName").textContent = gpu.name;
+  if (!state.modelConfigurationChosen) {
+    state.modelConfigurationChosen = true;
+    const large = (hardware?.gpus || []).some((item) => item.h3_eligible !== false && Number(item.vram_total_bytes) >= LARGE_GPU_MIN_BYTES);
+    if (!large && $("#modelConfiguration").value === "a100") $("#modelConfiguration").value = "comfy";
+  }
   renderGpuSelectors(hardware, state.bootstrap?.settings?.gpu_default_selector || "auto");
   const gpuRows = (hardware?.gpus || []).map((item) => `<div class="hardware-item"><span>GPU ${item.index}${item.selected_for_inference ? " · primary" : ""}</span><b>${escapeHTML(item.name)} · ${bytes(item.vram_total_bytes)}${item.compute_capability ? ` · SM ${escapeHTML(item.compute_capability)}` : ""}${item.h3_eligible === false ? `<small>H3対象外: ${escapeHTML(item.eligibility_reason || "")}</small>` : ""}${item.uuid ? `<small>${escapeHTML(item.uuid)}</small>` : ""}</b></div>`).join("");
   $("#hardwarePanel").innerHTML = `<h3>Hardware</h3>

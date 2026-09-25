@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import types
 from pathlib import Path
 
@@ -112,6 +113,12 @@ def _normalized_text_prefix(prefix: str) -> str | None:
     return None
 
 
+def conditioner_int_mm_enabled() -> bool:
+    """Opt-in only: ``HAYATE_TEXT_ENCODER_INT_MM=1`` restores upstream coupling."""
+
+    return os.environ.get("HAYATE_TEXT_ENCODER_INT_MM") == "1"
+
+
 def install_nvfp4_conditioner_override() -> None:
     """Adapt upstream's streaming reader while retaining its layer-50 model logic."""
 
@@ -120,12 +127,15 @@ def install_nvfp4_conditioner_override() -> None:
 
     def load_weights(self, encoder_dir, gpu_layers, text_encoder_path=None, int8_use_int_mm=False):
         if not _is_nvfp4_awq(text_encoder_path):
+            # Upstream couples --int8_fast for the DiT and the conditioner.  The
+            # conditioner runs once per prompt, so int_mm saves almost nothing
+            # there while adding activation error to every prompt embedding.
             return original_load(
                 self,
                 encoder_dir,
                 gpu_layers,
                 text_encoder_path=text_encoder_path,
-                int8_use_int_mm=int8_use_int_mm,
+                int8_use_int_mm=int8_use_int_mm and conditioner_int_mm_enabled(),
             )
 
         import torch

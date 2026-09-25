@@ -1,0 +1,17 @@
+# Large-memory (A100 40/80 GB, SM80) registry.  Every stage runs resident;
+# the INT8 ConvRot DiT uses INT8 tensor cores with the A100 profiles.
+# Select it in Settings -> モデルを準備 -> A100構成 -> 標準パスを適用.
+models:
+  minimax_h3:
+    transformer:
+      path: "../../models/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+      expected_quantization: INT8_CONVROT
+    text_encoder:
+      path: "../../models/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+      expected_quantization: INT8_CONVROT
+    video_vae:
+      path: "../../models/minimax_h3_video_vae_int8_convrot.safetensors"
+      expected_quantization: INT8_CONVROT
+    audio_vae:
+      path: "../../models/vae/minimax_h3_audio_vae_fp32.safetensors"
+      expected_quantization: FP32

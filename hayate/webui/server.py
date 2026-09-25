@@ -47,8 +47,11 @@ from hayate.models import ModelRegistry
 from hayate.profiles import get_generation_profile
 from hayate.runtime.gpu_devices import (
     AUTO_GPU,
+    allowed_gpu_devices,
     discover_gpu_devices,
+    eligible_gpu_devices,
     normalize_gpu_selector,
+    resolve_gpu_selector,
 )
 from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.jobs import FINAL_STATUSES, JobManager, JobStore
@@ -73,6 +76,9 @@ PROFILE_NAMES = (
     "custom",
     "comfy_fasth3",
     "comfy_fl2va",
+    "a100_detail",
+    "a100_quality",
+    "a100_pdd",
 )
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ASSET_ID_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -133,6 +139,10 @@ class PromptAssistantPayload(BaseModel):
         return value
 
 
+class ApplyStandardPayload(BaseModel):
+    configuration: Literal["standard", "a100"] = "standard"
+
+
 class ModelDownloadPayload(BaseModel):
     asset_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
     license_accepted: bool = False
@@ -170,6 +180,9 @@ class GenerationPayload(BaseModel):
         "custom",
         "comfy_fasth3",
         "comfy_fl2va",
+        "a100_detail",
+        "a100_quality",
+        "a100_pdd",
     ] = "fast_sage_detail"
     task: Literal["auto", "t2va", "fl2va", "ref2va"] = "auto"
     vsa_keep: Literal[5.0, 7.5, 10.0] = 10.0
@@ -195,6 +208,9 @@ class GenerationPayload(BaseModel):
     activation_chunk_rows: int = Field(default=32768, ge=0, le=1048576)
     vae_tile_size: int = Field(default=256, ge=16, le=2048)
     gpu_device: str = AUTO_GPU
+    text_encoder_gpu_layers: int = Field(default=0, ge=-1, le=64)
+    text_encoder_stream: bool = True
+    int8_fast: bool = False
 
     @field_validator("width", "height")
     @classmethod
@@ -273,6 +289,31 @@ def _gpu_resources() -> list[dict[str, object]]:
     return rows
 
 
+def _large_gpu_issue(selector: str, min_vram_gib: int, devices) -> str | None:
+    """Refuse resident (no block swap) profiles on adapters that cannot hold them."""
+
+    minimum = min_vram_gib * 1024**3
+    need = f"{min_vram_gib} GiB以上"
+    if selector != AUTO_GPU:
+        device = resolve_gpu_selector(selector, devices)
+        if device is None:
+            return None  # the backend preflight reports unknown selectors
+        if device.vram_total_bytes < minimum:
+            return (
+                f"このプロファイルはVRAM {need}のGPU向けです（{device.name}: "
+                f"{device.vram_total_bytes / 1024**3:.0f} GiB）。通常のプロファイルを選択してください"
+            )
+        return None
+    eligible = eligible_gpu_devices(allowed_gpu_devices(devices))
+    small = [device for device in eligible if device.vram_total_bytes < minimum]
+    if not eligible or len(small) == len(eligible):
+        return f"このプロファイルはVRAM {need}のGPU向けですが、該当するGPUが見つかりません"
+    if small:
+        # Auto may pick any free adapter; pin the job to a large one instead.
+        return f"VRAM容量の異なるGPUが混在しています。詳細設定の実行GPUで{need}のGPUを指定してください"
+    return None
+
+
 def _profile_values(payload: GenerationPayload) -> dict[str, object]:
     values: dict[str, object] = {
         "steps": payload.steps,
@@ -286,6 +327,9 @@ def _profile_values(payload: GenerationPayload) -> dict[str, object]:
         "blocks_to_swap": payload.blocks_to_swap,
         "activation_chunk_rows": payload.activation_chunk_rows,
         "vae_tile_size": payload.vae_tile_size,
+        "text_encoder_gpu_layers": payload.text_encoder_gpu_layers,
+        "text_encoder_stream": payload.text_encoder_stream,
+        "int8_fast": payload.int8_fast,
     }
     if payload.profile != "custom":
         profile = get_generation_profile(payload.profile)
@@ -509,6 +553,11 @@ def create_app(
         result = await asyncio.to_thread(model_setup.status)
         result["comfy_fasth3"] = comfy_readiness(root, result["assets"])
         result["comfy_fl2va"] = comfy_readiness(root, result["assets"], mode="fl2va")
+        registry_name = Path(settings_store.load().config_path).name
+        result["active_configuration"] = {
+            "models.yaml": "standard",
+            "models.a100.yaml": "a100",
+        }.get(registry_name, "custom")
         return result
 
     @app.post("/api/models/setup/prepare")
@@ -516,10 +565,20 @@ def create_app(
         return await asyncio.to_thread(model_setup.prepare)
 
     @app.post("/api/models/setup/apply-standard")
-    async def apply_standard_model_paths(request: Request):
+    async def apply_standard_model_paths(request: Request, payload: ApplyStandardPayload | None = None):
         """Explicitly point the model-related settings at HAYATE's folders."""
 
+        configuration = payload.configuration if payload else "standard"
         defaults = WebUISettings.defaults(root).to_dict()
+        if configuration == "a100":
+            registry = root / "configs" / "models.a100.yaml"
+            if not registry.is_file():
+                bundled = Path(__file__).resolve().parents[2] / "configs" / "models.a100.yaml"
+                if not bundled.is_file():
+                    raise HTTPException(409, "A100構成のモデル定義 configs/models.a100.yaml が見つかりません")
+                registry.parent.mkdir(parents=True, exist_ok=True)
+                registry.write_bytes(bundled.read_bytes())
+            defaults["config_path"] = str(registry)
         current_values = settings_store.load().to_dict()
         for key in (
             "config_path",
@@ -760,6 +819,16 @@ def create_app(
                 ).encode("utf-8")
             ).hexdigest()[:24]
             prompt_cache = Path(current.prompt_cache_dir) / f"{cache_key}.safetensors"
+        min_vram_gib = (
+            0 if payload.profile == "custom" else get_generation_profile(payload.profile).min_vram_gib
+        )
+        if min_vram_gib:
+            devices = await asyncio.to_thread(discover_gpu_devices)
+            issue = _large_gpu_issue(gpu_device, min_vram_gib, devices)
+            if issue:
+                raise HTTPException(
+                    422, {"message": "generation preflight failed", "issues": [issue]}
+                )
         try:
             if payload.profile in {"comfy_fasth3", "comfy_fl2va"}:
                 assets = (await asyncio.to_thread(model_setup.status))["assets"]
@@ -813,6 +882,9 @@ def create_app(
                     Path(current.pdd_adaln_affine_path) if bool(profile["pdd"]) else None
                 ),
                 gpu_device=gpu_device,
+                text_encoder_gpu_layers=int(profile["text_encoder_gpu_layers"]),
+                text_encoder_stream=bool(profile["text_encoder_stream"]),
+                int8_fast=bool(profile["int8_fast"]),
             )
             plan = await asyncio.to_thread(backend.plan, request)
             if not plan.executable:

@@ -113,3 +113,26 @@ assert.match(preflight, /生成前チェック/);
 assert.match(preflight, /missing DiT/);
 assert.match(run('errorMessage({detail:[{loc:["body","width"], msg:"must be a multiple of 32"}]}, 422)'), /幅: must be a multiple of 32/);
 console.log('Seed mode, preferred profile, prompt display, validation and error formatting passed');
+
+// A100 profiles appear only with a >=38 GiB adapter and run on either model set.
+const a100 = radios.find(r => r.value === 'a100_detail');
+run('state.bootstrap = {hardware: {gpus: [{h3_eligible: true, vram_total_bytes: 12 * 1024 ** 3}]}}; state.modelSetup = {assets: A100_MODEL_IDS.map(id => ({id,status:"verified"}))}; updateModelAvailability()');
+assert(a100.disabled, 'A100 profile needs a large GPU');
+assert.equal(a100.card.hidden, true, 'A100 cards stay hidden on consumer GPUs');
+run('state.bootstrap.hardware.gpus.push({h3_eligible: true, vram_total_bytes: 80 * 1024 ** 3}); updateModelAvailability()');
+assert(!a100.disabled, 'INT8 A100 set on an 80 GB GPU enables the A100 profile');
+assert.equal(a100.card.hidden, false);
+assert(radios.find(r => r.value === 'a100_pdd').disabled, 'A100 PDD still needs the PDD models');
+assert.equal(checked.value, 'a100_detail', 'Large GPUs fall back to the A100 profile first');
+run(`state.bootstrap.profiles = {a100_detail: ${JSON.stringify({
+  steps: 20, attention_backend: 'sageattn', easycache: true, pdd: false, easycache_threshold: 0.4,
+  easycache_start: 0.15, easycache_end: 0.85, easycache_max_consecutive_skips: 2, blocks_to_swap: 0,
+  activation_chunk_rows: 32768, vae_tile_size: 256, text_encoder_gpu_layers: -1, int8_fast: true,
+})}}; applyProfile("a100_detail")`);
+assert.equal(elements.get('#blocksSwap').value, 0);
+assert.equal(elements.get('#textEncoderResident').checked, true, 'Preset keeps the conditioner resident');
+assert.equal(elements.get('#int8Fast').checked, true, 'Preset enables INT8 tensor cores');
+assert.equal(run('generationPayload().text_encoder_gpu_layers'), -1);
+assert.equal(run('generationPayload().text_encoder_stream'), false);
+assert.equal(run('generationPayload().int8_fast'), true);
+console.log('A100 large-GPU profile gating and resident payload passed');

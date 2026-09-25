@@ -157,6 +157,70 @@ MODEL_ASSETS: tuple[ModelAsset, ...] = (
             ),
         ),
     ),
+    # Large-memory (A100 class) set.  Headers were range-audited: the pruned
+    # DiT carries the same adaln_t_table as the W4A8 export (PDD compatible)
+    # with 200 INT8 ConvRot groups instead of W4; the conditioner has 350.
+    ModelAsset(
+        "transformer_int8_pruned",
+        "transformer",
+        "MiniMax H3 FL2VA Pruned INT8 ConvRot（A100向け）",
+        "Comfy-Org/MiniMax-H3",
+        "4cc1d817b6184899b41293954329f576cb5ae86b",
+        MINIMAX_LICENSE,
+        MINIMAX_LICENSE_URL,
+        (
+            _artifact(
+                "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                20_970_379_616,
+                "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+            ),
+        ),
+        notes=(
+            "40GB以上のGPUで全ブロック常駐。A100ではINT8 Tensor Core（int8_fast）で実行",
+            "W4A8より重みの量子化誤差が小さい8-bit版。PDD 8-Stepと互換",
+        ),
+    ),
+    ModelAsset(
+        "text_encoder_int8_convrot",
+        "text_encoder",
+        "Qwen3-VL 32B MiniMax H3 INT8 ConvRot（A100向け）",
+        "Comfy-Org/MiniMax-H3",
+        "4cc1d817b6184899b41293954329f576cb5ae86b",
+        MINIMAX_LICENSE,
+        MINIMAX_LICENSE_URL,
+        (
+            _artifact(
+                "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+                "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+                27_141_342_152,
+                "bc2ced0fbea64757fa9acddccfc0b3f4819d1dcf1da6c124d690d368be283923",
+            ),
+        ),
+        notes=(
+            "GPU常駐で使用。AmpereにはFP4演算器がないため、A100ではNVFP4より高精度・高速",
+        ),
+    ),
+    ModelAsset(
+        "text_encoder_bf16",
+        "text_encoder",
+        "Qwen3-VL 32B MiniMax H3 BF16（80GB向け・無量子化）",
+        "Comfy-Org/MiniMax-H3",
+        "4cc1d817b6184899b41293954329f576cb5ae86b",
+        MINIMAX_LICENSE,
+        MINIMAX_LICENSE_URL,
+        (
+            _artifact(
+                "text_encoders/qwen3vl_32b_minimax_h3_bf16.safetensors",
+                "text_encoders/qwen3vl_32b_minimax_h3_bf16.safetensors",
+                51_506_295_256,
+                "600d567f6a9629c8574e8e7041b199bdd9c59a986afa7906910a81919610607d",
+            ),
+        ),
+        notes=(
+            "任意：80GB GPUでプロンプト埋め込みを無量子化にする品質比較用",
+        ),
+    ),
     ModelAsset(
         "audio_vae_fp32",
         "audio_vae",

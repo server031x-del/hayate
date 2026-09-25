@@ -235,6 +235,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="apply experimental PDD Acc 8-Step with SageAttention (8 transformer evaluations)",
     )
+    for flag, dest, text in (
+        ("--a100-detail", "a100_detail", "A100-class 40/80 GB: Fast Sage Detail schedule, everything resident, INT8 tensor-core DiT"),
+        ("--a100-quality", "a100_quality", "A100-class fidelity reference: 50 points, SDPA, no cache, weight-only INT8 error"),
+        ("--a100-pdd", "a100_pdd", "A100-class PDD Acc 8-Step with SDPA and everything resident"),
+    ):
+        speed_profiles.add_argument(flag, dest=dest, action="store_true", help=text)
+    generate_parser.add_argument(
+        "--text-encoder-gpu-layers",
+        type=int,
+        default=0,
+        help="conditioner decoder layers kept on the GPU (-1 = all resident, 0 = streamed)",
+    )
+    generate_parser.add_argument(
+        "--no-text-encoder-stream",
+        dest="text_encoder_stream",
+        action="store_false",
+        help="do not stream CPU-resident conditioner layers (use with --text-encoder-gpu-layers -1)",
+    )
+    generate_parser.add_argument(
+        "--int8-fast",
+        action="store_true",
+        help="run an INT8 ConvRot DiT through torch._int_mm (INT8 tensor cores)",
+    )
     generate_parser.add_argument("--dry-run", action="store_true")
     generate_parser.add_argument("--json", action="store_true", dest="as_json")
 
@@ -556,7 +579,10 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         if args.rtx3060_pdd
         else "pdd_sage"
         if args.rtx3060_pdd_sage
-        else None
+        else next(
+            (name for name in ("a100_detail", "a100_quality", "a100_pdd") if getattr(args, name, False)),
+            None,
+        )
     )
     if selected_profile is not None:
         profile = get_generation_profile(selected_profile)
@@ -571,6 +597,9 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
             "blocks_to_swap",
             "activation_chunk_rows",
             "vae_tile_size",
+            "text_encoder_gpu_layers",
+            "text_encoder_stream",
+            "int8_fast",
         ):
             setattr(args, field, getattr(profile, field))
         if profile.pdd:
@@ -615,6 +644,9 @@ def run_generate(args: argparse.Namespace, console: Console) -> int:
         pdd_checkpoint=args.pdd_checkpoint,
         pdd_adaln_affine=args.pdd_adaln_affine,
         gpu_device=normalize_gpu_selector(args.gpu_device),
+        text_encoder_gpu_layers=args.text_encoder_gpu_layers,
+        text_encoder_stream=args.text_encoder_stream,
+        int8_fast=args.int8_fast,
     )
     plan = backend.plan(request)
     payload = plan.to_dict()

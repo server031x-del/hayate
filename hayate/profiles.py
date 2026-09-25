@@ -19,10 +19,25 @@ class GenerationProfile:
     vae_tile_size: int = 256
     approximate: bool = False
     pdd: bool = False
+    # Consumer profiles stream the 32B conditioner layer by layer from host
+    # RAM.  Large-memory profiles keep it resident (-1 = every decoder layer).
+    text_encoder_gpu_layers: int = 0
+    text_encoder_stream: bool = True
+    # Route INT8 ConvRot DiT Linears through torch._int_mm (INT8 tensor cores).
+    # The conditioner is kept on the weight-only dequantized path regardless.
+    int8_fast: bool = False
+    # Profiles above the consumer-GPU operating point declare the adapter
+    # memory they were designed for; the WebUI refuses smaller GPUs.
+    min_vram_gib: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
 
+
+# Profiles for a single 40/80 GB datacenter adapter (A100 class, SM80).  Every
+# stage is resident: no DiT block swap and no conditioner streaming.  They keep
+# the RTX 3060-validated cache/tile settings so only placement changes.
+LARGE_GPU_MIN_VRAM_GIB = 38
 
 GENERATION_PROFILES = {
     "quality": GenerationProfile(
@@ -118,6 +133,62 @@ GENERATION_PROFILES = {
         activation_chunk_rows=0,
         vae_tile_size=256,
         approximate=True,
+    ),
+    # Recommended A100 operating point: the validated Fast Sage Detail
+    # schedule (20 points, EasyCache 0.4 ending at 85%) with everything
+    # resident and INT8 tensor-core GEMMs for an INT8 ConvRot DiT.
+    "a100_detail": GenerationProfile(
+        "a100_detail",
+        "A100 高速・高画質",
+        20,
+        "sageattn",
+        True,
+        0.4,
+        0.15,
+        0.85,
+        2,
+        blocks_to_swap=0,
+        approximate=True,
+        text_encoder_gpu_layers=-1,
+        text_encoder_stream=False,
+        int8_fast=True,
+        min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
+    ),
+    # Fidelity reference for A/B checks on the same card: exact attention, no
+    # cache, 50 points, and weight-only INT8 error (dequantized matmul).
+    "a100_quality": GenerationProfile(
+        "a100_quality",
+        "A100 品質基準",
+        50,
+        "sdpa",
+        False,
+        0.2,
+        0.15,
+        0.95,
+        2,
+        blocks_to_swap=0,
+        text_encoder_gpu_layers=-1,
+        text_encoder_stream=False,
+        min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
+    ),
+    # PDD keeps SDPA (the PDD+Sage short-clip failure) and the dequantized
+    # base matmul, matching the numerics its W4A8 validation relied on.
+    "a100_pdd": GenerationProfile(
+        "a100_pdd",
+        "A100 PDD 8-Step",
+        9,
+        "sdpa",
+        False,
+        0.4,
+        0.15,
+        0.95,
+        2,
+        blocks_to_swap=0,
+        approximate=True,
+        pdd=True,
+        text_encoder_gpu_layers=-1,
+        text_encoder_stream=False,
+        min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
     ),
 }
 

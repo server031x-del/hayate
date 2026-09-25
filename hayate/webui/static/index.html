@@ -200,6 +200,18 @@
               </div>
               <p class="availability-note" id="profileAvailabilityNote" hidden aria-live="polite"></p>
               <div class="profile-grid" id="profileGrid" role="radiogroup" aria-labelledby="profileHeading">
+                <label class="profile-card large-gpu-profile" hidden>
+                  <input type="radio" name="profile" value="a100_detail" disabled>
+                  <span class="profile-icon detail">A</span>
+                  <span class="profile-text"><b>A100 高速・高画質</b><small>全常駐 · INT8 Tensor Core · 20ステップ</small></span>
+                  <em>A100推奨</em>
+                </label>
+                <label class="profile-card large-gpu-profile" hidden>
+                  <input type="radio" name="profile" value="a100_quality" disabled>
+                  <span class="profile-icon quality">AQ</span>
+                  <span class="profile-text"><b>A100 品質基準</b><small>全常駐 · 50ステップ · SDPA · 比較の基準</small></span>
+                  <em class="muted">基準</em>
+                </label>
                 <label class="profile-card">
                   <input type="radio" name="profile" value="comfy_fasth3" disabled>
                   <span class="profile-icon fasth3">H4</span>
@@ -232,6 +244,12 @@
               <details class="more-profiles" id="moreProfiles">
                 <summary><span>その他のプロファイル</span><small>PDD・SDPA・FastVideo実験・Custom</small><i aria-hidden="true"></i></summary>
                 <div class="profile-grid secondary">
+                  <label class="profile-card large-gpu-profile" hidden>
+                    <input type="radio" name="profile" value="a100_pdd" disabled>
+                    <span class="profile-icon pdd">A8</span>
+                    <span class="profile-text"><b>A100 PDD 8-Step</b><small>全常駐 · 蒸留8回評価 · SDPA</small></span>
+                    <em class="muted">比較用</em>
+                  </label>
                   <label class="profile-card">
                     <input type="radio" name="profile" value="pdd">
                     <span class="profile-icon pdd">P8</span>
@@ -287,6 +305,8 @@
                     <label><span>Activation chunk rows</span><input id="chunkRows" type="number" min="0" max="1048576" step="1024" value="32768"></label>
                     <label><span>VAE tile</span><select id="vaeTile"><option value="256">256 · 安全</option><option value="320">320 · 実験的</option></select></label>
                     <label class="toggle-field"><span>Prompt Cache<small>同じ入力を高速再利用</small></span><input id="promptCache" type="checkbox" checked><i aria-hidden="true"></i></label>
+                    <label class="toggle-field" title="40GB以上のGPU向け。オフにするとCPUから1層ずつ転送します"><span>TEXT常駐<small>テキストエンコーダをGPUに保持</small></span><input id="textEncoderResident" type="checkbox"><i aria-hidden="true"></i></label>
+                    <label class="toggle-field" title="INT8 ConvRot DiTをINT8 Tensor Coreで実行（A100など）"><span>INT8 Fast<small>INT8 DiTを高速演算</small></span><input id="int8Fast" type="checkbox"><i aria-hidden="true"></i></label>
                   </div>
                   <div class="option-box">
                     <div class="option-head"><div><b>EasyCache</b><small>Transformer計算を安全範囲で再利用します</small></div><label class="switch" title="EasyCacheを切り替え"><input id="easycache" type="checkbox" checked aria-label="EasyCache"><i aria-hidden="true"></i></label></div>
@@ -410,6 +430,7 @@
                 <div class="model-config-row">
                   <label class="model-config-picker"><span>おすすめの構成</span>
                     <select id="modelConfiguration">
+                      <option value="a100">A100（40/80GB）：INT8 DiT＋INT8 TEXT · 全常駐</option>
                       <option value="comfy">FastH3：高速4-Step · INT8＋共有VAE</option>
                       <option value="fl2va">画像向け：FL2VA · W4A8＋共有VAE</option>
                       <option value="standard">おすすめ：品質・速度バランス（通常H3 W4A8）</option>
