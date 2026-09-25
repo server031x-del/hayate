@@ -41,11 +41,10 @@ existing prompt) the current prompt text.
 If Credential Manager reports a deletion failure, the API returns an error and
 the configured status remains visible instead of claiming that the key was
 removed.
-When using the included launcher, the detected OpenVPN network
-`10.8.0.0/24` is allowed for these two operations. If your VPN uses another
-client CIDR, replace the `--trusted-client-network` value in
-`START_HAYATE_WEBUI.cmd`; the value must match the source address seen by this
-server. Additional networks can be supplied by repeating the option.
+OpenAI settings and prompt creation are also available through the Colab
+public URL. The WebUI does not authenticate visitors; anyone with the URL can
+change the stored key or invoke the paid prompt assistant. Keep the URL private
+or put an authenticated proxy in front of it.
 
 ## Model setup
 
@@ -204,11 +203,10 @@ CUDA while a queued WebUI generation owns the selected physical adapter.
 - Default bind: `0.0.0.0:7860` for trusted-LAN access; the interface remains
   unauthenticated. Use `--local-only` or `--host 127.0.0.1` for loopback-only
   operation.
-- OpenAI credential mutation and `/api/prompt-assistant` accept loopback and
-  only the explicitly configured `--trusted-client-network` CIDRs when the
-  server uses a non-loopback bind. The included launcher permits the private
-  OpenVPN range `10.8.0.0/24`; use a real authenticated, encrypted reverse
-  proxy before exposing a paid API credential to any other network.
+- OpenAI credential mutation and `/api/prompt-assistant` use the same WebUI
+  access rules as other settings and actions, including through a public URL.
+  This interface is unauthenticated; use an authenticated proxy if the URL will
+  be shared.
 - No CORS is enabled. Mutating API calls require the HAYATE UI header and a
   same-origin request. Trusted hosts and a restrictive Content Security Policy
   are applied.

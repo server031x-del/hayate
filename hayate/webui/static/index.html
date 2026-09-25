@@ -454,7 +454,7 @@
                 <label><span>OpenAI API key</span><input id="settingOpenAIKey" type="password" data-setting autocomplete="new-password" placeholder="保存済みなら空欄のまま"><small>キーは画面に再表示せず、Windows Credential Managerへ保存します。未対応環境ではこのサーバーの実行中だけ保持します。</small></label>
                 <label class="consent-check"><input id="clearOpenAIKey" type="checkbox" data-setting><span>保存済みのAPIキーを消去する</span></label>
               </div>
-              <p class="ai-settings-note">AIプロンプト作成時は概要と、選択中のタスク・長さ・解像度・音声設定（および改善時の現在プロンプト）がOpenAIへ送信されます。APIキーの登録とAI作成はサーバーPCのローカル接続または許可済みVPNからのみ実行できます。生成エンジンの子プロセスへAPIキーは渡しません。</p>
+              <p class="ai-settings-note">AIプロンプト作成時は概要と、選択中のタスク・長さ・解像度・音声設定（および改善時の現在プロンプト）がOpenAIへ送信されます。公開URLからも設定とAI作成を利用できます。認証がない公開URLは共有しないでください。APIキーは生成エンジンの子プロセスへ渡しません。</p>
             </details>
           </div>
           <aside class="settings-aside">
@@ -550,6 +550,6 @@
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <!-- Legacy cache key retained in this marker for clients that fingerprint the previous build. -->
   <!-- app.js?v=20260909-model-availability-v1 -->
-  <script src="/assets/app.js?v=20260925-studio-2" defer></script>
+  <script src="/assets/app.js?v=20260925-openai-access" defer></script>
 </body>
 </html>

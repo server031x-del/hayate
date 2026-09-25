@@ -24,7 +24,6 @@ from hayate.webui.openai_settings import OpenAISettingsStore
 from hayate.webui.progress import H3ProgressParser
 from hayate.webui.server import (
     GenerationPayload,
-    _is_trusted_client,
     _normalize_trusted_client_networks,
     _nearest_h3_frame_count,
     _profile_values,
@@ -32,13 +31,9 @@ from hayate.webui.server import (
 )
 
 
-def test_vpn_client_allowlist_matches_ipv4_and_mapped_ipv6_addresses():
+def test_trusted_network_configuration_still_validates_cidrs():
     networks = _normalize_trusted_client_networks(["10.8.0.0/24", "fd42::/64"])
-    assert _is_trusted_client("10.8.0.44", networks)
-    assert _is_trusted_client("::ffff:10.8.0.44", networks)
-    assert _is_trusted_client("fd42::25", networks)
-    assert not _is_trusted_client("10.9.0.44", networks)
-    assert not _is_trusted_client("not-an-ip", networks)
+    assert [str(network) for network in networks] == ["10.8.0.0/24", "fd42::/64"]
     with pytest.raises(ValueError):
         _normalize_trusted_client_networks(["not-a-cidr"])
 
@@ -653,18 +648,40 @@ def test_shutdown_before_popen_never_launches_child(tmp_path, monkeypatch):
     finally:
         manager.shutdown()
 
-def test_remote_model_setup_does_not_require_openai_secret_access(tmp_path):
+def test_remote_ui_can_save_openai_key_and_use_prompt_assistant(tmp_path, monkeypatch):
     service = SimpleNamespace(
         prepare=lambda: {"ready": True},
         start_download=lambda asset_id, license_accepted, source_urls=None: {"id": asset_id},
     )
-    app = create_app(tmp_path, trusted_hosts=["*"], model_setup_service=service)
+    backend = _FakeCredentialBackend()
+    openai_store = OpenAISettingsStore(tmp_path / "openai-settings.json", secret_backend=backend)
+    app = create_app(tmp_path, trusted_hosts=["*"], model_setup_service=service, openai_store=openai_store)
     with TestClient(app) as client:
         headers = {"X-HAYATE-UI": "1"}
         assert client.post('/api/models/setup/prepare', json={}, headers=headers).status_code == 200
         assert client.post('/api/models/setup/apply-standard', json={}, headers=headers).status_code == 200
         assert client.post('/api/models/setup/download', json={"asset_id": "transformer_w4a8", "license_accepted": True}, headers=headers).status_code == 202
-        assert client.post('/api/prompt-assistant', json={"brief": "test", "task": "t2va"}, headers=headers).status_code == 403
+        settings = client.get('/api/bootstrap').json()['settings']
+        saved = client.put('/api/settings', json={
+            **settings, 'openai_model': 'gpt-5.6-luna', 'openai_api_key': 'remote-test-key',
+        }, headers=headers)
+        assert saved.status_code == 200
+        assert saved.json()['openai']['api_key_configured'] is True
+        assert 'remote-test-key' not in saved.text
+
+        class FakeAssistant:
+            def __init__(self, config):
+                assert config.api_key == 'remote-test-key'
+
+            def generate(self, request):
+                return _prompt_result()
+
+        monkeypatch.setattr('hayate.webui.server.MiniMaxH3PromptAssistant', FakeAssistant)
+        prompt = client.post('/api/prompt-assistant', json={
+            'brief': 'test', 'task': 't2va',
+        }, headers=headers)
+        assert prompt.status_code == 200
+        assert 'remote-test-key' not in prompt.text
         assert client.post('/api/models/setup/prepare', json={}).status_code == 403
 
 

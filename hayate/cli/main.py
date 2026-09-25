@@ -291,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="CIDR",
-        help="allow OpenAI settings and prompt authoring from this client network (repeatable)",
+        help="deprecated compatibility option; OpenAI actions follow normal WebUI access",
     )
     return parser
 

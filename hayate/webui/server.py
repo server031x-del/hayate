@@ -152,20 +152,6 @@ def _normalize_trusted_client_networks(
     return tuple(networks)
 
 
-def _is_trusted_client(
-    client_host: str,
-    networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...],
-) -> bool:
-    try:
-        address = ipaddress.ip_address(client_host)
-    except ValueError:
-        return False
-    candidates: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...] = (address,)
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        candidates += (address.ipv4_mapped,)
-    return any(candidate in network for candidate in candidates for network in networks)
-
-
 class GenerationPayload(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
     original_prompt: str | None = Field(default=None, max_length=12000)
@@ -457,21 +443,6 @@ def create_app(
             candidate = root / candidate
         return candidate.resolve(strict=False)
 
-    def ensure_local_secret_action(request: Request) -> None:
-        """Allow loopback and explicitly trusted VPN clients only."""
-
-        if not app.state.network_exposed:
-            return
-        client_host = request.client.host if request.client else ""
-        if client_host in LOOPBACK_HOSTS or _is_trusted_client(
-            client_host, app.state.trusted_client_networks
-        ):
-            return
-        raise HTTPException(
-            403,
-            "OpenAIの設定とAIプロンプト作成はローカル接続または許可済みVPNからのみ利用できます",
-        )
-
     def with_media_availability(job: dict) -> dict:
         enriched = dict(job)
         raw_path = enriched.get("output_path") or ""
@@ -609,11 +580,7 @@ def create_app(
         return status
 
     @app.put("/api/settings")
-    async def put_settings(payload: SettingsPayload, request: Request):
-        openai_current = openai_settings_store.load()
-        openai_changed = payload.openai_model != openai_current.model
-        if payload.openai_api_key or payload.clear_openai_api_key or openai_changed:
-            ensure_local_secret_action(request)
+    async def put_settings(payload: SettingsPayload):
         if payload.clear_openai_api_key and payload.openai_api_key:
             raise HTTPException(
                 422, "APIキーの入力と消去は同時に指定できません"
@@ -657,8 +624,7 @@ def create_app(
         }
 
     @app.post("/api/prompt-assistant", response_model=H3PromptResult)
-    async def prompt_assistant(payload: PromptAssistantPayload, request: Request):
-        ensure_local_secret_action(request)
+    async def prompt_assistant(payload: PromptAssistantPayload):
         openai_settings = openai_settings_store.load()
         api_key, _source = openai_settings_store.credentials()
         if not api_key:

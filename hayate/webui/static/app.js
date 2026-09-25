@@ -1885,11 +1885,8 @@ function renderNetwork(network) {
   $("#networkMode").textContent = exposed ? "LAN" : "LOCAL";
   $("#networkEyebrow").textContent = exposed ? "LAN OPEN" : "LOCAL ONLY";
   $("#networkTitle").textContent = exposed ? "LANからアクセスできます" : "このPCからのみアクセスできます";
-  const trusted = Array.isArray(network?.trusted_client_networks) && network.trusted_client_networks.length
-    ? ` OpenAI設定とAI作成は ${network.trusted_client_networks.join(", ")} とローカル接続からのみ許可されます。`
-    : "";
   $("#networkText").textContent = exposed
-    ? `認証はありません。信頼できるネットワークでのみ使用してください。${trusted}`
+    ? "認証はありません。公開URLを知る人はOpenAI設定とAIプロンプト作成を利用できます。共有範囲に注意してください。"
     : "ループバック（127.0.0.1）でのみ待ち受けています。LANから使う場合は --host 0.0.0.0 --allow-network で起動してください。";
 }
 
