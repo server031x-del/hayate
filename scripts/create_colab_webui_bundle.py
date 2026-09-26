@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 ROOT_FILES = ("pyproject.toml", "README.md", "LICENSE")
-ROOT_DIRECTORIES = ("configs", "hayate")
+ROOT_DIRECTORIES = ("configs", "hayate", "colab")
 
 
 def iter_files(root: Path):
