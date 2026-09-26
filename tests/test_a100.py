@@ -90,7 +90,9 @@ def test_a100_profiles_keep_dit_resident_and_stream_conditioner():
     for key in ("steps", "attention_backend", "easycache_threshold", "easycache_start", "easycache_end"):
         assert getattr(detail, key) == getattr(reference, key)
     assert detail.int8_fast is True
+    assert detail.keep_model_warm is True
     assert get_generation_profile("a100_quality").int8_fast is False
+    assert get_generation_profile("a100_quality").keep_model_warm is False
     assert get_generation_profile("a100_quality").steps == 50
     pdd = get_generation_profile("a100_pdd")
     assert pdd.pdd and pdd.steps == 9 and pdd.attention_backend == "sdpa"

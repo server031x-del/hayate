@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
 import sys
+import traceback
 from pathlib import Path
+from typing import TextIO
 
-from hayate.backends.minimax_h3.easycache import EasyCacheConfig, install_easycache_override
+from hayate.backends.minimax_h3.easycache import (
+    EasyCacheConfig,
+    install_easycache_override,
+)
 from hayate.backends.minimax_h3.events import emit_event, install_structured_events
-from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter
-from hayate.backends.minimax_h3.nvfp4_conditioner import install_nvfp4_conditioner_override
-from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_override
+from hayate.backends.minimax_h3.native_cache import install_native_transformer_cache
+from hayate.backends.minimax_h3.nvfp4_conditioner import (
+    install_nvfp4_conditioner_override,
+)
 from hayate.backends.minimax_h3.pdd import install_pdd_override
+from hayate.backends.minimax_h3.prompt_cache import install_prompt_cache_override
+from hayate.backends.minimax_h3.upstream import H3UpstreamAdapter
 from hayate.backends.minimax_h3.vae_tiling import (
     install_vae_attention_override,
     install_vae_tiling_override,
@@ -31,14 +40,14 @@ def _collect_runtime_metrics(module, psutil, torch) -> dict:
         metrics["process_peak_private_bytes"] = int(
             getattr(memory, "peak_pagefile", getattr(memory, "private", memory.vms))
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - metrics must never mask inference errors
         metrics["process_metrics_error"] = f"{type(exc).__name__}: {exc}"
     if torch.cuda.is_available():
         try:
             torch.cuda.synchronize()
             metrics["cuda_peak_allocated_bytes"] = int(torch.cuda.max_memory_allocated())
             metrics["cuda_peak_reserved_bytes"] = int(torch.cuda.max_memory_reserved())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - metrics must never mask inference errors
             # Metrics are diagnostic. Preserve the generation exception when
             # CUDA is already in a failed state instead of masking it here.
             metrics["cuda_metrics_error"] = f"{type(exc).__name__}: {exc}"
@@ -51,37 +60,8 @@ def _collect_runtime_metrics(module, psutil, torch) -> dict:
     return metrics
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--upstream", type=Path, required=True)
-    parser.add_argument("upstream_args", nargs=argparse.REMAINDER)
-    args = parser.parse_args(argv)
-
-    # Acquire the child-owned runtime lease before importing upstream/H3 or
-    # PyTorch.  This closes the startup window in which an orphaned child
-    # could otherwise hold CUDA while a second process imports the engine.
-    runtime_lease: GPULease | None = None
-    if os.environ.get("HAYATE_GPU_RUNTIME_LEASE") == "1":
-        gpu_id = os.environ.get("HAYATE_GPU_UUID") or None
-        if gpu_id is None and os.environ.get("HAYATE_GPU_INDEX"):
-            gpu_id = f"index:{os.environ['HAYATE_GPU_INDEX']}"
-        runtime_lease = GPULease(
-            gpu_id=gpu_id,
-            namespace="runtime",
-            owner={
-                "pid": os.getpid(),
-                "kind": "generation-runtime",
-                "gpu_uuid": os.environ.get("HAYATE_GPU_UUID") or None,
-                "gpu_index": os.environ.get("HAYATE_GPU_INDEX"),
-            },
-        )
-        if not runtime_lease.acquire():
-            owner = runtime_lease.busy_owner() or {}
-            raise RuntimeError(
-                f"選択したGPUの実行ロックを取得できません (pid={owner.get('pid', '?')})"
-            )
-
-    adapter = H3UpstreamAdapter(args.upstream)
+def _load_engine(upstream: Path, *, persistent: bool):
+    adapter = H3UpstreamAdapter(upstream)
     validation = adapter.require_valid(require_audited_commit=True)
     engine_dir = adapter.checkout / "minimax_engine"
     for path in (adapter.checkout, engine_dir):
@@ -94,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     install_structured_events(module)
+    # Install model reuse before EasyCache wraps load_transformer_stage, so each
+    # request gets a fresh EasyCache controller even when the DiT is reused.
+    if persistent:
+        install_native_transformer_cache(module)
     install_easycache_override(module, EasyCacheConfig.from_environment())
     install_prompt_cache_override(module, upstream_commit=validation.commit or validation.audited_commit)
     install_w4a8_override(module)
@@ -101,25 +85,109 @@ def main(argv: list[str] | None = None) -> int:
     install_nvfp4_conditioner_override()
     install_vae_tiling_override()
     install_vae_attention_override("sdpa")
-    forwarded = args.upstream_args
-    if forwarded and forwarded[0] == "--":
-        forwarded = forwarded[1:]
-    sys.argv = [str(script), *forwarded]
+    return module, script
+
+
+def _execute_generation(module, script: Path, forwarded: list[str], output: TextIO) -> tuple[int, dict]:
     import psutil
     import torch
 
+    sys.argv = [str(script), *forwarded]
+    module._hayate_easycache_controller = None
+    module._hayate_pdd_controller = None
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
-    emit_event("process", phase="start", progress=1.0, stage="起動準備", detail="MiniMax H3エンジンを起動しました")
+    returncode = 0
+    with contextlib.redirect_stdout(output):
+        emit_event(
+            "process", phase="start", progress=1.0, stage="起動準備",
+            detail="MiniMax H3エンジンを起動しました",
+        )
+        try:
+            module.main()
+        except SystemExit as exc:
+            returncode = int(exc.code) if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        except BaseException:  # noqa: BLE001 - serialize job failures and keep the worker alive
+            traceback.print_exc(file=output)
+            returncode = 1
+        finally:
+            metrics = _collect_runtime_metrics(module, psutil, torch)
+            emit_event("metrics", runtime_metrics=metrics)
+            print("HAYATE_RUNTIME_METRICS " + json.dumps(metrics, sort_keys=True), file=output, flush=True)
+            controller = getattr(module, "_hayate_easycache_controller", None)
+            clear_cache = getattr(controller, "_clear_runtime_state", None)
+            if clear_cache is not None:
+                clear_cache()
+    return returncode, metrics
+
+
+def _persistent_worker_loop(module, script: Path, input_stream=None, output_stream=None) -> int:
+    input_stream = input_stream or sys.stdin
+    output_stream = output_stream or sys.stdout
+    print("HAYATE_WORKER_READY " + json.dumps({"pid": os.getpid()}), file=output_stream, flush=True)
+    for raw in input_stream:
+        try:
+            request = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            result = {"returncode": 2, "error": "invalid worker request", "runtime_metrics": {}}
+        else:
+            if request == {"command": "shutdown"}:
+                print("HAYATE_WORKER_STOPPED", file=output_stream, flush=True)
+                return 0
+            forwarded = request.get("argv") if isinstance(request, dict) else None
+            if not isinstance(forwarded, list) or not all(isinstance(item, str) for item in forwarded):
+                result = {"returncode": 2, "error": "worker request argv must be a string list", "runtime_metrics": {}}
+            else:
+                returncode, metrics = _execute_generation(module, script, forwarded, output_stream)
+                result = {"returncode": returncode, "runtime_metrics": metrics}
+        print("HAYATE_WORKER_RESULT " + json.dumps(result, sort_keys=True), file=output_stream, flush=True)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--upstream", type=Path, required=True)
+    parser.add_argument("--persistent-worker", action="store_true")
+    parser.add_argument("upstream_args", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+
+    # The worker owns the runtime lease for its full lifetime. A one-shot
+    # generation keeps the historical child-owned lease behavior.
+    runtime_lease: GPULease | None = None
+    if os.environ.get("HAYATE_GPU_RUNTIME_LEASE") == "1":
+        gpu_id = os.environ.get("HAYATE_GPU_UUID") or None
+        if gpu_id is None and os.environ.get("HAYATE_GPU_INDEX"):
+            gpu_id = f"index:{os.environ['HAYATE_GPU_INDEX']}"
+        runtime_lease = GPULease(
+            gpu_id=gpu_id,
+            namespace="runtime",
+            owner={
+                "pid": os.getpid(),
+                "kind": "generation-runtime-worker" if args.persistent_worker else "generation-runtime",
+                "gpu_uuid": os.environ.get("HAYATE_GPU_UUID") or None,
+                "gpu_index": os.environ.get("HAYATE_GPU_INDEX"),
+            },
+        )
+        if not runtime_lease.acquire():
+            owner = runtime_lease.busy_owner() or {}
+            raise RuntimeError(
+                f"選択したGPUの実行ロックを取得できません (pid={owner.get('pid', '?')})"
+            )
+
     try:
-        module.main()
+        module, script = _load_engine(args.upstream, persistent=args.persistent_worker)
+        forwarded = args.upstream_args
+        if forwarded and forwarded[0] == "--":
+            forwarded = forwarded[1:]
+        if args.persistent_worker:
+            if forwarded:
+                raise ValueError("persistent worker does not accept generation arguments at startup")
+            return _persistent_worker_loop(module, script)
+        returncode, _ = _execute_generation(module, script, forwarded, sys.stdout)
+        return returncode
     finally:
-        metrics = _collect_runtime_metrics(module, psutil, torch)
-        emit_event("metrics", runtime_metrics=metrics)
-        print("HAYATE_RUNTIME_METRICS " + json.dumps(metrics, sort_keys=True), flush=True)
         if runtime_lease is not None:
             runtime_lease.release()
-    return 0
 
 
 if __name__ == "__main__":

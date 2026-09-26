@@ -195,7 +195,13 @@ class EasyCacheController:
 
 def install_transformer_easycache(transformer, config: EasyCacheConfig, total_steps: int):
     controller = EasyCacheController(config, total_steps)
-    original_forward = transformer.forward
+    # Native A100 workers may reuse the transformer instance across jobs.
+    # Always wrap the true forward again so cache state/stats are per job and
+    # controllers do not become nested with stale prompt/step history.
+    original_forward = getattr(
+        transformer, "_hayate_easycache_original_forward", transformer.forward
+    )
+    transformer._hayate_easycache_original_forward = original_forward
 
     def cached_forward(_self, *args, **kwargs):
         return controller.forward(original_forward, args, kwargs)

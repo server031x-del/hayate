@@ -72,6 +72,7 @@ class GenerationRequest:
     text_encoder_gpu_layers: int = 0
     text_encoder_stream: bool = True
     int8_fast: bool = False
+    keep_model_warm: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,7 @@ class GenerationPlan:
                     else None
                 ),
                 "gpu_device": self.request.gpu_device,
+                "keep_model_warm": self.request.keep_model_warm,
             },
         }
 

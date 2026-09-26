@@ -29,6 +29,9 @@ class GenerationProfile:
     # Profiles above the consumer-GPU operating point declare the adapter
     # memory they were designed for; the WebUI refuses smaller GPUs.
     min_vram_gib: int = 0
+    # Keep the native H3 transformer resident between WebUI jobs.  This is
+    # limited to the A100 detail profile because it reserves substantial VRAM.
+    keep_model_warm: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -154,6 +157,7 @@ GENERATION_PROFILES = {
         text_encoder_stream=True,
         int8_fast=True,
         min_vram_gib=LARGE_GPU_MIN_VRAM_GIB,
+        keep_model_warm=True,
     ),
     # Fidelity reference for A/B checks on the same card: exact attention, no
     # cache, 50 points, and weight-only INT8 error (dequantized matmul).

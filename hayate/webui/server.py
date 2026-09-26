@@ -331,6 +331,7 @@ def _profile_values(payload: GenerationPayload) -> dict[str, object]:
         "text_encoder_gpu_layers": payload.text_encoder_gpu_layers,
         "text_encoder_stream": payload.text_encoder_stream,
         "int8_fast": payload.int8_fast,
+        "keep_model_warm": False,
     }
     if payload.profile != "custom":
         profile = get_generation_profile(payload.profile)
@@ -900,6 +901,7 @@ def create_app(
                 text_encoder_gpu_layers=int(profile["text_encoder_gpu_layers"]),
                 text_encoder_stream=bool(profile["text_encoder_stream"]),
                 int8_fast=bool(profile["int8_fast"]),
+                keep_model_warm=bool(profile["keep_model_warm"]),
             )
             plan = await asyncio.to_thread(backend.plan, request)
             if not plan.executable:

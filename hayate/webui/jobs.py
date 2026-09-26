@@ -34,6 +34,7 @@ from hayate.runtime.gpu_devices import (
 )
 from hayate.runtime.gpu_lease import GPULease
 from hayate.webui.comfy_pool import WarmComfyPool
+from hayate.webui.native_pool import WarmNativePool
 
 BLACKWELL_FASTVIDEO_CAPABILITIES = frozenset({"10.0", "10.3"})
 FAST_PROFILE_MIN_VRAM_BYTES = 80 * 1024**3
@@ -345,6 +346,8 @@ class JobManager:
         self._active: dict[str, subprocess.Popen[str]] = {}
         self._comfy_pool = WarmComfyPool()
         self._comfy_jobs: dict[str, str] = {}
+        self._native_pool = WarmNativePool()
+        self._native_jobs: dict[str, str] = {}
         self.worker_count = max(1, min(8, int(worker_count)))
         self._gpu_discovery = gpu_discovery
         self._lock = threading.RLock()
@@ -412,6 +415,7 @@ class JobManager:
             process_active = status in {"running", "stopping"}
             process = self._active.get(job_id)
             comfy_gpu = self._comfy_jobs.get(job_id)
+            native_gpu = self._native_jobs.get(job_id)
             if process_active and process is not None and process.poll() is not None:
                 return job
             changed = self.store.transition(
@@ -429,7 +433,10 @@ class JobManager:
             # Stop its owned server before the GPU lease can be reassigned.
             if comfy_gpu is not None:
                 self._comfy_pool.discard(comfy_gpu)
-            self._terminate_owned_tree(process)
+            elif native_gpu is not None:
+                self._native_pool.discard(native_gpu, force=True)
+            else:
+                self._terminate_owned_tree(process)
         return self.store.get(job_id) or job
 
     def stop_and_save(self, job_id: str) -> dict:
@@ -647,12 +654,22 @@ class JobManager:
                         # runtime namespace.  Probe it before committing to
                         # an expensive Python/torch launch; otherwise the new
                         # child would fail only after importing H3.
-                        warm_gpu = gpu_id if (
+                        keep_comfy_warm = (
                             plan.backend == "comfy_fasth3"
                             and environment.get("HAYATE_COMFY_KEEP_WARM", "1") != "0"
-                        ) else None
-                        if warm_gpu != gpu_id and self._comfy_pool.has_live(gpu_id):
+                        )
+                        keep_native_warm = (
+                            plan.backend == "mayble_h3"
+                            and plan.request.keep_model_warm
+                        )
+                        if not keep_comfy_warm and self._comfy_pool.has_live(gpu_id):
                             self._comfy_pool.discard(gpu_id)
+                        if not keep_native_warm and self._native_pool.has_live(gpu_id):
+                            self._native_pool.discard(gpu_id, force=True)
+                        elif keep_native_warm and self._comfy_pool.has_live(gpu_id):
+                            self._comfy_pool.discard(gpu_id)
+                        elif keep_comfy_warm and self._native_pool.has_live(gpu_id):
+                            self._native_pool.discard(gpu_id, force=True)
                         runtime_probe = GPULease(
                             gpu_id=gpu_id,
                             namespace="runtime",
@@ -662,7 +679,11 @@ class JobManager:
                                 "job_id": job_id,
                             },
                         )
-                        if not (warm_gpu == gpu_id and self._comfy_pool.has_live(gpu_id)):
+                        runtime_already_owned = (
+                            (keep_comfy_warm and self._comfy_pool.has_live(gpu_id))
+                            or (keep_native_warm and self._native_pool.has_live(gpu_id))
+                        )
+                        if not runtime_already_owned:
                             if not runtime_probe.acquire():
                                 lease.release()
                                 continue
@@ -709,6 +730,7 @@ class JobManager:
         started = 0.0
         parser = H3ProgressParser()
         process: subprocess.Popen[str] | None = None
+        native_session = None
         lease: GPULease | None = None
         assigned_device: GPUDevice | None = None
         returncode = -1
@@ -773,6 +795,36 @@ class JobManager:
                 environment.update(self._comfy_pool.ensure(
                     assigned_device.identity, runtime, command[0], root, environment,
                 ))
+            keep_native_warm = (
+                plan.backend == "mayble_h3"
+                and plan.request.keep_model_warm
+                and assigned_device is not None
+            )
+            command = list(plan.command)
+            if plan.backend == "fastvideo_vsa":
+                command = update_runtime_command_environment(
+                    command,
+                    environment,
+                    project_root=Path(__file__).resolve().parents[2],
+                )
+            worker_cwd = (
+                plan.working_directory
+                or (plan.upstream.checkout if plan.upstream is not None else Path.cwd())
+            )
+            if keep_native_warm:
+                self.store.update(
+                    job_id,
+                    stage="起動準備",
+                    detail="A100常駐ワーカーを準備しています",
+                )
+                with log_path.open("w", encoding="utf-8") as startup_log:
+                    native_session = self._native_pool.ensure(
+                        assigned_device.identity,
+                        command,
+                        environment,
+                        Path(worker_cwd),
+                        startup_log,
+                    )
             with self._lock:
                 if self._stop.is_set():
                     if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
@@ -792,35 +844,26 @@ class JobManager:
                         self._comfy_pool.discard(assigned_device.identity)
                     self._plans.pop(job_id, None)
                     return
-                # FastVideo's WSL bridge serializes its allow-listed
-                # environment after ``/usr/bin/env`` in argv.  The scheduler
-                # selects a physical GPU immediately before spawning, so
-                # refresh that embedded assignment as well as Popen(env=...).
-                command = list(plan.command)
-                if plan.backend == "fastvideo_vsa":
-                    command = update_runtime_command_environment(
+                if native_session is not None:
+                    process = native_session.process
+                else:
+                    process = subprocess.Popen(
                         command,
-                        environment,
-                        project_root=Path(__file__).resolve().parents[2],
+                        cwd=str(worker_cwd),
+                        env=environment,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        bufsize=1,
+                        creationflags=creationflags,
                     )
-                process = subprocess.Popen(
-                    command,
-                    cwd=str(
-                        plan.working_directory
-                        or (plan.upstream.checkout if plan.upstream is not None else Path.cwd())
-                    ),
-                    env=environment,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    creationflags=creationflags,
-                )
                 self._active[job_id] = process
                 if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
                     self._comfy_jobs[job_id] = assigned_device.identity
+                if native_session is not None and assigned_device is not None:
+                    self._native_jobs[job_id] = assigned_device.identity
                 running = self.store.transition(
                     job_id,
                     {"queued"},
@@ -834,33 +877,64 @@ class JobManager:
                 if not running:
                     self._active.pop(job_id, None)
                     self._comfy_jobs.pop(job_id, None)
+                    self._native_jobs.pop(job_id, None)
                     self._plans.pop(job_id, None)
-                    self._terminate_owned_tree(process)
+                    if native_session is not None and assigned_device is not None:
+                        self._native_pool.discard(assigned_device.identity, force=True)
+                    else:
+                        self._terminate_owned_tree(process)
                     if "HAYATE_COMFY_BASE_URL" in environment and assigned_device is not None:
                         self._comfy_pool.discard(assigned_device.identity)
                     return
-            with log_path.open("w", encoding="utf-8") as log:
-                assert process.stdout is not None
-                for line in process.stdout:
-                    log.write(line)
-                    log.flush()
-                    update = parser.feed(line)
-                    if update is not None:
-                        changes: dict[str, object] = {
-                            "progress": update.progress,
-                            "stage": update.stage,
-                            "detail": update.detail,
-                            "eta_seconds": update.eta_seconds,
-                        }
-                        if update.runtime_metrics is not None:
-                            changes["runtime_metrics"] = update.runtime_metrics
-                        self.store.update(job_id, **changes)
-            returncode = process.wait()
+            def record_line(line: str, log) -> None:
+                log.write(line)
+                log.flush()
+                update = parser.feed(line)
+                if update is not None:
+                    changes: dict[str, object] = {
+                        "progress": update.progress,
+                        "stage": update.stage,
+                        "detail": update.detail,
+                        "eta_seconds": update.eta_seconds,
+                    }
+                    if update.runtime_metrics is not None:
+                        changes["runtime_metrics"] = update.runtime_metrics
+                    self.store.update(job_id, **changes)
+
+            with log_path.open("a" if native_session is not None else "w", encoding="utf-8") as log:
+                if native_session is not None:
+                    assert assigned_device is not None
+                    separator = command.index("--")
+                    returncode, worker_metrics = self._native_pool.run_job(
+                        native_session,
+                        job_id,
+                        command[separator + 1 :],
+                        log,
+                        lambda line: record_line(line, log),
+                    )
+                    if worker_metrics and parser.runtime_metrics is None:
+                        parser.runtime_metrics = worker_metrics
+                else:
+                    assert process.stdout is not None
+                    for line in process.stdout:
+                        record_line(line, log)
+                    returncode = process.wait()
         except (OSError, subprocess.SubprocessError, RuntimeError, TimeoutError, ValueError) as exc:
             error = str(exc)
         finally:
             if process is not None and process.poll() not in (None, 0) and assigned_device is not None and plan.backend == "comfy_fasth3":
                 self._comfy_pool.discard(assigned_device.identity)
+            if (
+                native_session is not None
+                and assigned_device is not None
+                and (
+                    error is not None
+                    or returncode != 0
+                    or process is None
+                    or process.poll() is not None
+                )
+            ):
+                self._native_pool.discard(assigned_device.identity, force=True)
             if lease is not None:
                 lease.release()
 
@@ -922,6 +996,7 @@ class JobManager:
                 )
             self._active.pop(job_id, None)
             self._comfy_jobs.pop(job_id, None)
+            self._native_jobs.pop(job_id, None)
             self._plans.pop(job_id, None)
         write_generation_manifest(
             plan,
@@ -955,3 +1030,4 @@ class JobManager:
         for worker in self._workers:
             worker.join(timeout=8)
         self._comfy_pool.close()
+        self._native_pool.close()

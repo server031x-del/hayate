@@ -191,6 +191,33 @@ def test_transformer_installer_binds_instance_forward():
     assert transformer._hayate_easycache_controller is controller
 
 
+def test_transformer_installer_replaces_controller_on_a_reused_model():
+    calls = 0
+
+    class Transformer:
+        def forward(self, *, hidden_states, audio_hidden_states, return_dict):
+            nonlocal calls
+            calls += 1
+            return hidden_states + 1.0, audio_hidden_states + 2.0
+
+    transformer = Transformer()
+    config = EasyCacheConfig(enabled=True, start=0.0, end=1.0)
+    first = install_transformer_easycache(transformer, config, total_steps=2)
+    tensor = torch.ones((1, 2, 2))
+    transformer.forward(
+        hidden_states=tensor, audio_hidden_states=tensor, return_dict=False
+    )
+
+    second = install_transformer_easycache(transformer, config, total_steps=2)
+    transformer.forward(
+        hidden_states=tensor, audio_hidden_states=tensor, return_dict=False
+    )
+
+    assert calls == 2
+    assert first.calls == 1
+    assert second.calls == 1
+
+
 def test_module_override_is_idempotent_and_preserves_loader_tuple():
     calls = 0
 
