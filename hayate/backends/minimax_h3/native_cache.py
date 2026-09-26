@@ -99,9 +99,13 @@ def install_native_transformer_cache(module: Any) -> None:
             minimax_transformer = importlib.import_module("minimax_video.transformer")
             minimax_attention.set_attention_backend(args.attn_mode)
             minimax_transformer.set_act_chunk_rows(args.act_chunk_rows)
-            move_to(device)
-            print("HAYATE_DIT_CACHE reused=1", flush=True)
-            return cache["transformer"], None
+            try:
+                move_to(device)
+            except Exception as exc:  # noqa: BLE001 - retry this job with a cold checkpoint load
+                clear(f"restore-failed:{type(exc).__name__}")
+            else:
+                print("HAYATE_DIT_CACHE reused=1", flush=True)
+                return cache["transformer"], None
 
         if cache["transformer"] is not None:
             clear("model-settings-changed")

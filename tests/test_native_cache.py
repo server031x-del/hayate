@@ -131,6 +131,63 @@ def test_native_transformer_cache_reloads_when_model_contract_changes():
     assert len(models) == 2
 
 
+def test_native_transformer_restore_failure_falls_back_to_cold_load(monkeypatch):
+    models = []
+
+    class _RestoreFailureModel(_FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.cuda_moves = 0
+
+        def to(self, device):
+            if str(device).startswith("cuda"):
+                self.cuda_moves += 1
+                # The post-job warm placement succeeds; fail only when the
+                # next generation tries to restore the cached object.
+                if self.cuda_moves == 2:
+                    raise RuntimeError("unsupported quantized transfer")
+            return super().to(device)
+
+    def load(*_args):
+        model = _RestoreFailureModel() if not models else _FakeModel()
+        models.append(model)
+        return model, None
+
+    module = SimpleNamespace(
+        torch=SimpleNamespace(device=_Device, cuda=_FakeCuda),
+        load_transformer_stage=load,
+        clean_memory_on_device=lambda _device: None,
+    )
+
+    def run_one(args, task, device):
+        transformer, _loader = module.load_transformer_stage(args, task, device)
+        module.clean_memory_on_device(device)
+        return transformer
+
+    module.run_one = run_one
+    package = ModuleType("minimax_video")
+    package.__path__ = []
+    monkeypatch.setitem(sys.modules, "minimax_video", package)
+    monkeypatch.setitem(
+        sys.modules,
+        "minimax_video.attention",
+        SimpleNamespace(set_attention_backend=lambda _mode: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "minimax_video.transformer",
+        SimpleNamespace(set_act_chunk_rows=lambda _rows: None),
+    )
+    install_native_transformer_cache(module)
+
+    first = module.run_one(_args(), "t2va", "cuda:0")
+    second = module.run_one(_args(), "t2va", "cuda:0")
+
+    assert first is models[0]
+    assert second is models[1]
+    assert len(models) == 2
+
+
 def test_native_transformer_cache_is_disabled_for_unsupported_placement():
     models = []
     module = SimpleNamespace(
