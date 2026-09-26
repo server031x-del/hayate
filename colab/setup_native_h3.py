@@ -7,6 +7,25 @@ from pathlib import Path
 import subprocess
 import sys
 
+SAGEATTENTION_SOURCE = (
+    "git+https://github.com/thu-ml/SageAttention.git"
+    "@d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5"
+)
+
+
+def _sageattention_install_command(python: str, constraints: Path) -> list[str]:
+    return [
+        python,
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+        "--no-deps",
+        "-c",
+        str(constraints),
+        SAGEATTENTION_SOURCE,
+    ]
+
 
 def install(root: Path = Path("/content/HAYATE-webui"), *, sageattention: bool = False) -> None:
     if sys.platform != "linux" or not Path("/content").is_dir():
@@ -33,9 +52,13 @@ def install(root: Path = Path("/content/HAYATE-webui"), *, sageattention: bool =
     if sageattention:
         env = os.environ.copy()
         env.setdefault("MAX_JOBS", "4")
+        print(
+            "SageAttention 2.2.0を公式GitHubの固定コミットからビルドします。"
+            "失敗した場合はpipのビルドログを表示します。",
+            flush=True,
+        )
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", "--no-build-isolation",
-             "-c", str(constraints), "sageattention==2.2.0"],
+            _sageattention_install_command(sys.executable, constraints),
             cwd=root, env=env, check=True,
         )
         subprocess.run([sys.executable, "-c", "import sageattention"], check=True)
